@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 
 import '../models/transaction_model.dart';
 import '../theme/app_theme.dart';
+import '../utils/category_icons.dart';
 
 /// Fila de un movimiento en el historial. Deslizar hacia la izquierda
 /// revela dos acciones: Editar y Borrar.
@@ -120,7 +121,8 @@ class _TransactionTileState extends State<TransactionTile>
                   ),
                   child: Row(
                     children: [
-                      Text(tx.categoryEmoji, style: const TextStyle(fontSize: 20)),
+                      Icon(iconForKey(tx.categoryIconKey),
+                          color: colorForKey(tx.categoryIconKey), size: 20),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Column(

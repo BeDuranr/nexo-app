@@ -21,6 +21,7 @@ class QuickEntryScreen extends StatefulWidget {
 
 class _QuickEntryScreenState extends State<QuickEntryScreen> {
   final _amountController = TextEditingController();
+  final _amountFocusNode = FocusNode();
   MovementType _type = MovementType.expense;
   CategoryModel? _selectedCategory;
   final _noteController = TextEditingController();
@@ -35,8 +36,16 @@ class _QuickEntryScreenState extends State<QuickEntryScreen> {
   bool _showMonthlyBalance = true;
 
   @override
+  void initState() {
+    super.initState();
+    // Redibuja para mostrar/ocultar la barra "Listo" según el foco.
+    _amountFocusNode.addListener(() => setState(() {}));
+  }
+
+  @override
   void dispose() {
     _amountController.dispose();
+    _amountFocusNode.dispose();
     _noteController.dispose();
     super.dispose();
   }
@@ -143,7 +152,7 @@ class _QuickEntryScreenState extends State<QuickEntryScreen> {
       type: _type,
       categoryId: _selectedCategory!.id!,
       categoryName: _selectedCategory!.name,
-      categoryEmoji: _selectedCategory!.emoji,
+      categoryIconKey: _selectedCategory!.iconKey,
       note: _noteController.text.trim(),
       date: effectiveDate,
     );
@@ -185,9 +194,11 @@ class _QuickEntryScreenState extends State<QuickEntryScreen> {
     final isExpense = _type == MovementType.expense;
 
     return SafeArea(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
-        child: Column(
+      child: Stack(
+        children: [
+          SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+            child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Tocar la fecha abre el selector para editarla.
@@ -311,6 +322,7 @@ class _QuickEntryScreenState extends State<QuickEntryScreen> {
                       Expanded(
                         child: TextField(
                           controller: _amountController,
+                          focusNode: _amountFocusNode,
                           autofocus: false,
                           keyboardType: const TextInputType.numberWithOptions(decimal: false),
                           inputFormatters: [ThousandsInputFormatter()],
@@ -399,8 +411,8 @@ class _QuickEntryScreenState extends State<QuickEntryScreen> {
               child: FilledButton(
                 onPressed: _submit,
                 style: FilledButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: AppColors.urban950,
+                  backgroundColor: isExpense ? AppColors.expense : AppColors.income,
+                  foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 ),
@@ -417,6 +429,32 @@ class _QuickEntryScreenState extends State<QuickEntryScreen> {
             const SizedBox(height: 8),
           ],
         ),
+      ),
+
+          // Barra "Listo" — el teclado numérico de iOS/Android no trae
+          // una tecla para ocultarse, así que la agregamos nosotros,
+          // igual que hace Calculadora o Notas de Apple.
+          if (_amountFocusNode.hasFocus)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: MediaQuery.of(context).viewInsets.bottom,
+              child: Container(
+                height: 40,
+                color: AppColors.urban800,
+                alignment: Alignment.centerRight,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: TextButton(
+                  onPressed: () => _amountFocusNode.unfocus(),
+                  child: const Text('Listo',
+                      style: TextStyle(
+                          color: AppColors.urbanBlue,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 15)),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

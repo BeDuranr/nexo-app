@@ -23,6 +23,7 @@ class EditTransactionScreen extends StatefulWidget {
 
 class _EditTransactionScreenState extends State<EditTransactionScreen> {
   late final TextEditingController _amountController;
+  final _amountFocusNode = FocusNode();
   late final TextEditingController _noteController;
   late MovementType _type;
   CategoryModel? _selectedCategory;
@@ -38,11 +39,14 @@ class _EditTransactionScreenState extends State<EditTransactionScreen> {
     _noteController = TextEditingController(text: tx.note);
     _type = tx.type;
     _selectedDate = tx.date;
+    // Redibuja para mostrar/ocultar la barra "Listo" según el foco.
+    _amountFocusNode.addListener(() => setState(() {}));
   }
 
   @override
   void dispose() {
     _amountController.dispose();
+    _amountFocusNode.dispose();
     _noteController.dispose();
     super.dispose();
   }
@@ -133,7 +137,7 @@ class _EditTransactionScreenState extends State<EditTransactionScreen> {
       type: _type,
       categoryId: _selectedCategory!.id!,
       categoryName: _selectedCategory!.name,
-      categoryEmoji: _selectedCategory!.emoji,
+      categoryIconKey: _selectedCategory!.iconKey,
       note: _noteController.text.trim(),
       // Conserva la hora original del registro, solo cambia el día si
       // el usuario lo editó.
@@ -211,9 +215,11 @@ class _EditTransactionScreenState extends State<EditTransactionScreen> {
         ],
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-          child: Column(
+        child: Stack(
+          children: [
+            SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               InkWell(
@@ -263,6 +269,7 @@ class _EditTransactionScreenState extends State<EditTransactionScreen> {
                         Expanded(
                           child: TextField(
                             controller: _amountController,
+                            focusNode: _amountFocusNode,
                             keyboardType: const TextInputType.numberWithOptions(decimal: false),
                             inputFormatters: [ThousandsInputFormatter()],
                             style: AppTheme.display(size: 32),
@@ -347,8 +354,8 @@ class _EditTransactionScreenState extends State<EditTransactionScreen> {
                 child: FilledButton(
                   onPressed: _save,
                   style: FilledButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: AppColors.urban950,
+                    backgroundColor: isExpense ? AppColors.expense : AppColors.income,
+                    foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                   ),
@@ -364,6 +371,30 @@ class _EditTransactionScreenState extends State<EditTransactionScreen> {
               ),
             ],
           ),
+        ),
+
+            // Barra "Listo" — igual que en la pantalla de registro.
+            if (_amountFocusNode.hasFocus)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: MediaQuery.of(context).viewInsets.bottom,
+                child: Container(
+                  height: 40,
+                  color: AppColors.urban800,
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  child: TextButton(
+                    onPressed: () => _amountFocusNode.unfocus(),
+                    child: const Text('Listo',
+                        style: TextStyle(
+                            color: AppColors.urbanBlue,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 15)),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );

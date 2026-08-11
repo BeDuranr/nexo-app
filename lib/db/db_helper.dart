@@ -25,8 +25,9 @@ class DBHelper {
 
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
   }
 
@@ -38,7 +39,7 @@ class DBHelper {
       CREATE TABLE categories (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
-        emoji TEXT NOT NULL,
+        icon_key TEXT NOT NULL DEFAULT 'other',
         is_default INTEGER NOT NULL DEFAULT 0
       )
     ''');
@@ -50,7 +51,7 @@ class DBHelper {
         type TEXT NOT NULL,
         category_id INTEGER NOT NULL,
         category_name TEXT NOT NULL,
-        category_emoji TEXT NOT NULL,
+        category_icon_key TEXT NOT NULL DEFAULT 'other',
         note TEXT,
         date TEXT NOT NULL
       )
@@ -59,16 +60,52 @@ class DBHelper {
     await _seedDefaultCategories(db);
   }
 
+  /// Migra instalaciones existentes (v1, con emoji) a v2 (con ícono),
+  /// sin perder categorías ni movimientos ya guardados.
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.execute("ALTER TABLE categories ADD COLUMN icon_key TEXT NOT NULL DEFAULT 'other'");
+      await db.execute(
+          "ALTER TABLE transactions ADD COLUMN category_icon_key TEXT NOT NULL DEFAULT 'other'");
+
+      const emojiToIconKey = {
+        '🚇': 'train',
+        '🍔': 'food',
+        '☕': 'coffee',
+        '🏠': 'home',
+        '💊': 'health',
+        '💼': 'briefcase',
+        '💻': 'laptop',
+        '📦': 'other',
+      };
+
+      for (final entry in emojiToIconKey.entries) {
+        await db.update(
+          'categories',
+          {'icon_key': entry.value},
+          where: 'emoji = ?',
+          whereArgs: [entry.key],
+        );
+        await db.update(
+          'transactions',
+          {'category_icon_key': entry.value},
+          where: 'category_emoji = ?',
+          whereArgs: [entry.key],
+        );
+      }
+    }
+  }
+
   Future<void> _seedDefaultCategories(Database db) async {
     final defaults = <CategoryModel>[
-      const CategoryModel(name: 'Metro', emoji: '🚇', isDefault: true),
-      const CategoryModel(name: 'Comida', emoji: '🍔', isDefault: true),
-      const CategoryModel(name: 'Café', emoji: '☕', isDefault: true),
-      const CategoryModel(name: 'Hogar', emoji: '🏠', isDefault: true),
-      const CategoryModel(name: 'Salud', emoji: '💊', isDefault: true),
-      const CategoryModel(name: 'Sueldo', emoji: '💼', isDefault: true),
-      const CategoryModel(name: 'Freelance', emoji: '💻', isDefault: true),
-      const CategoryModel(name: 'Otros', emoji: '📦', isDefault: true),
+      const CategoryModel(name: 'Metro', iconKey: 'train', isDefault: true),
+      const CategoryModel(name: 'Comida', iconKey: 'food', isDefault: true),
+      const CategoryModel(name: 'Café', iconKey: 'coffee', isDefault: true),
+      const CategoryModel(name: 'Hogar', iconKey: 'home', isDefault: true),
+      const CategoryModel(name: 'Salud', iconKey: 'health', isDefault: true),
+      const CategoryModel(name: 'Sueldo', iconKey: 'briefcase', isDefault: true),
+      const CategoryModel(name: 'Freelance', iconKey: 'laptop', isDefault: true),
+      const CategoryModel(name: 'Otros', iconKey: 'other', isDefault: true),
     ];
 
     for (final cat in defaults) {

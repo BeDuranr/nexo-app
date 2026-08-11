@@ -133,7 +133,7 @@ class TransactionProvider extends ChangeNotifier {
       } else {
         totals[t.categoryName] = CategoryTotal(
           name: t.categoryName,
-          emoji: t.categoryEmoji,
+          iconKey: t.categoryIconKey,
           amount: t.amount,
         );
       }
@@ -147,12 +147,12 @@ class TransactionProvider extends ChangeNotifier {
 /// Total acumulado de una categoría dentro de un periodo.
 class CategoryTotal {
   final String name;
-  final String emoji;
+  final String iconKey;
   final double amount;
 
-  const CategoryTotal({required this.name, required this.emoji, required this.amount});
+  const CategoryTotal({required this.name, required this.iconKey, required this.amount});
 
   CategoryTotal copyWith({double? amount}) {
-    return CategoryTotal(name: name, emoji: emoji, amount: amount ?? this.amount);
+    return CategoryTotal(name: name, iconKey: iconKey, amount: amount ?? this.amount);
   }
 }

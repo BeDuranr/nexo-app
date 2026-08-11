@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/transaction_model.dart';
 import '../providers/transaction_provider.dart';
 import '../theme/app_theme.dart';
+import '../utils/category_icons.dart';
 
 class MetricsScreen extends StatefulWidget {
   const MetricsScreen({super.key});
@@ -217,7 +218,7 @@ class _CategorySection extends StatelessWidget {
                     children: [
                       Row(
                         children: [
-                          Text(ct.emoji, style: const TextStyle(fontSize: 14)),
+                          Icon(iconForKey(ct.iconKey), color: colorForKey(ct.iconKey), size: 16),
                           const SizedBox(width: 6),
                           Text(ct.name,
                               style: const TextStyle(

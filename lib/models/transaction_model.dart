@@ -11,7 +11,7 @@ class TransactionModel {
   final MovementType type;
   final int categoryId;
   final String categoryName;
-  final String categoryEmoji;
+  final String categoryIconKey;
   final String note;
   final DateTime date;
 
@@ -21,7 +21,7 @@ class TransactionModel {
     required this.type,
     required this.categoryId,
     required this.categoryName,
-    required this.categoryEmoji,
+    required this.categoryIconKey,
     required this.note,
     required this.date,
   });
@@ -33,7 +33,7 @@ class TransactionModel {
       'type': movementTypeToString(type),
       'category_id': categoryId,
       'category_name': categoryName,
-      'category_emoji': categoryEmoji,
+      'category_icon_key': categoryIconKey,
       'note': note,
       'date': date.toIso8601String(),
     };
@@ -46,7 +46,7 @@ class TransactionModel {
       type: movementTypeFromString(map['type'] as String),
       categoryId: map['category_id'] as int,
       categoryName: map['category_name'] as String,
-      categoryEmoji: map['category_emoji'] as String,
+      categoryIconKey: map['category_icon_key'] as String? ?? 'other',
       note: map['note'] as String? ?? '',
       date: DateTime.parse(map['date'] as String),
     );

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/category_model.dart';
 import '../theme/app_theme.dart';
+import '../utils/category_icons.dart';
 
 class CategoryGrid extends StatelessWidget {
   final List<CategoryModel> categories;
@@ -32,7 +33,7 @@ class CategoryGrid extends StatelessWidget {
         ...categories.map((cat) {
           final isSelected = selected?.id == cat.id;
           return _CategoryChip(
-            emoji: cat.emoji,
+            iconKey: cat.iconKey,
             name: cat.name,
             selected: isSelected,
             onTap: () => onSelect(cat),
@@ -46,14 +47,14 @@ class CategoryGrid extends StatelessWidget {
 }
 
 class _CategoryChip extends StatelessWidget {
-  final String emoji;
+  final String iconKey;
   final String name;
   final bool selected;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
 
   const _CategoryChip({
-    required this.emoji,
+    required this.iconKey,
     required this.name,
     required this.selected,
     required this.onTap,
@@ -62,6 +63,7 @@ class _CategoryChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final iconColor = colorForKey(iconKey);
     return Material(
       color: selected ? AppColors.urban700 : AppColors.urban800,
       borderRadius: BorderRadius.circular(12),
@@ -81,7 +83,7 @@ class _CategoryChip extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(emoji, style: const TextStyle(fontSize: 18)),
+              Icon(iconForKey(iconKey), color: iconColor, size: 16),
               const SizedBox(width: 6),
               Flexible(
                 child: Text(

@@ -140,25 +140,33 @@ Future<CategoryEditResult?> showEditCategoryDialog(
               ],
             ),
             actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, const CategoryEditResult.delete()),
-                child: const Text('Eliminar', style: TextStyle(color: AppColors.expense)),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Cancelar'),
-              ),
-              FilledButton(
-                onPressed: () {
-                  final name = nameController.text.trim();
-                  if (name.isEmpty) return;
-                  Navigator.pop(
-                    ctx,
-                    CategoryEditResult.save(
-                        category.copyWith(name: name, iconKey: selectedIconKey)),
-                  );
-                },
-                child: const Text('Guardar'),
+              SizedBox(
+                width: double.maxFinite,
+                child: Row(
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx, const CategoryEditResult.delete()),
+                      child: const Text('Eliminar', style: TextStyle(color: AppColors.expense)),
+                    ),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('Cancelar'),
+                    ),
+                    FilledButton(
+                      onPressed: () {
+                        final name = nameController.text.trim();
+                        if (name.isEmpty) return;
+                        Navigator.pop(
+                          ctx,
+                          CategoryEditResult.save(
+                              category.copyWith(name: name, iconKey: selectedIconKey)),
+                        );
+                      },
+                      child: const Text('Guardar'),
+                    ),
+                  ],
+                ),
               ),
             ],
           );

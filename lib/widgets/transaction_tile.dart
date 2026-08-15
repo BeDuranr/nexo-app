@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../models/category_model.dart';
 import '../models/transaction_model.dart';
 import '../theme/app_theme.dart';
 import '../utils/category_icons.dart';
@@ -9,12 +10,20 @@ import '../utils/category_icons.dart';
 /// revela dos acciones: Editar y Borrar.
 class TransactionTile extends StatefulWidget {
   final TransactionModel tx;
+
+  /// Categoría actual (viva) del movimiento, si todavía existe. Se usa
+  /// para mostrar ícono/nombre al día aunque la categoría haya sido
+  /// editada después de crear el movimiento; si es null (la categoría
+  /// fue eliminada) se cae a lo que quedó guardado en [tx].
+  final CategoryModel? category;
+
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
   const TransactionTile({
     super.key,
     required this.tx,
+    required this.category,
     required this.onEdit,
     required this.onDelete,
   });
@@ -77,6 +86,10 @@ class _TransactionTileState extends State<TransactionTile>
     final isExpense = tx.type == MovementType.expense;
     final color = isExpense ? AppColors.expense : AppColors.income;
     final formattedAmount = NumberFormat.decimalPattern('es_CL').format(tx.amount);
+    // Prioriza la categoría viva (por si fue editada); si fue borrada,
+    // cae a la copia guardada en el movimiento.
+    final categoryIconKey = widget.category?.iconKey ?? tx.categoryIconKey;
+    final categoryName = widget.category?.name ?? tx.categoryName;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -121,15 +134,15 @@ class _TransactionTileState extends State<TransactionTile>
                   ),
                   child: Row(
                     children: [
-                      Icon(iconForKey(tx.categoryIconKey),
-                          color: colorForKey(tx.categoryIconKey), size: 20),
+                      Icon(iconForKey(categoryIconKey),
+                          color: colorForKey(categoryIconKey), size: 20),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              tx.note.isNotEmpty ? tx.note : tx.categoryName,
+                              tx.note.isNotEmpty ? tx.note : categoryName,
                               style: const TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.bold,
@@ -138,7 +151,7 @@ class _TransactionTileState extends State<TransactionTile>
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              '${DateFormat('d MMM, HH:mm', 'es_CL').format(tx.date)} • ${tx.categoryName}',
+                              '${DateFormat('d MMM, HH:mm', 'es_CL').format(tx.date)} • $categoryName',
                               style: const TextStyle(fontSize: 10, color: AppColors.urban300),
                             ),
                           ],

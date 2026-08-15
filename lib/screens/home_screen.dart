@@ -39,14 +39,16 @@ class _HomeScreenState extends State<HomeScreen> {
       body: Stack(
         children: List.generate(_screens.length, (i) {
           final isActive = _index == i;
-          return AnimatedOpacity(
-            key: ValueKey(i),
-            opacity: isActive ? 1 : 0,
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOut,
-            child: IgnorePointer(
-              ignoring: !isActive,
-              child: _screens[i],
+          return Positioned.fill(
+            child: AnimatedOpacity(
+              key: ValueKey(i),
+              opacity: isActive ? 1 : 0,
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOut,
+              child: IgnorePointer(
+                ignoring: !isActive,
+                child: _screens[i],
+              ),
             ),
           );
         }),

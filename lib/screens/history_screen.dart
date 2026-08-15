@@ -208,9 +208,17 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       itemCount: transactions.length,
                       itemBuilder: (context, index) {
                         final tx = transactions[index];
+                        CategoryModel? category;
+                        for (final c in categories) {
+                          if (c.id == tx.categoryId) {
+                            category = c;
+                            break;
+                          }
+                        }
                         return TransactionTile(
                           key: ValueKey(tx.id),
                           tx: tx,
+                          category: category,
                           onEdit: () {
                             Navigator.of(context).push(
                               PageRouteBuilder(

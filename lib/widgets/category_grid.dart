@@ -65,15 +65,18 @@ class _CategoryChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final iconColor = colorForKey(iconKey);
     return Material(
-      color: selected ? AppColors.urban700 : AppColors.urban800,
+      color: Colors.transparent,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         onLongPress: onLongPress,
-        child: Container(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           decoration: BoxDecoration(
+            color: selected ? AppColors.urban700 : AppColors.urban800,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: selected ? AppColors.urbanBlue : AppColors.urban700,
@@ -83,7 +86,12 @@ class _CategoryChip extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(iconForKey(iconKey), color: iconColor, size: 16),
+              AnimatedScale(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOut,
+                scale: selected ? 1.15 : 1.0,
+                child: Icon(iconForKey(iconKey), color: iconColor, size: 16),
+              ),
               const SizedBox(width: 6),
               Flexible(
                 child: Text(

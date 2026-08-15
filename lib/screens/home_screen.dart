@@ -36,7 +36,21 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(index: _index, children: _screens),
+      body: Stack(
+        children: List.generate(_screens.length, (i) {
+          final isActive = _index == i;
+          return AnimatedOpacity(
+            key: ValueKey(i),
+            opacity: isActive ? 1 : 0,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+            child: IgnorePointer(
+              ignoring: !isActive,
+              child: _screens[i],
+            ),
+          );
+        }),
+      ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _index,
         onTap: (i) => setState(() => _index = i),

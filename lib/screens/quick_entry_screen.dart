@@ -275,11 +275,25 @@ class _QuickEntryScreenState extends State<QuickEntryScreen> {
                       ],
                     ),
                     const SizedBox(height: 6),
-                    Text(
-                      '${isNegative ? '-' : ''}\$${NumberFormat.decimalPattern('es_CL').format(displayedBalance.abs())}',
-                      style: AppTheme.display(
-                        size: 20,
-                        color: isNegative ? AppColors.expense : AppColors.income,
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 220),
+                      transitionBuilder: (child, animation) => FadeTransition(
+                        opacity: animation,
+                        child: SlideTransition(
+                          position: Tween<Offset>(
+                            begin: const Offset(0, 0.25),
+                            end: Offset.zero,
+                          ).animate(animation),
+                          child: child,
+                        ),
+                      ),
+                      child: Text(
+                        '${isNegative ? '-' : ''}\$${NumberFormat.decimalPattern('es_CL').format(displayedBalance.abs())}',
+                        key: ValueKey('$_showMonthlyBalance-$displayedBalance'),
+                        style: AppTheme.display(
+                          size: 20,
+                          color: isNegative ? AppColors.expense : AppColors.income,
+                        ),
                       ),
                     ),
                     if (_showMonthlyBalance) ...[
@@ -346,34 +360,53 @@ class _QuickEntryScreenState extends State<QuickEntryScreen> {
             ),
             const SizedBox(height: 14),
 
-            // Toggle tipo — independiente de la categoría elegida.
+            // Toggle tipo — píldora deslizante, independiente de la
+            // categoría elegida.
             Container(
+              height: 40,
               padding: const EdgeInsets.all(4),
               decoration: BoxDecoration(
                 color: AppColors.urban950,
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(color: AppColors.urban700),
               ),
-              child: Row(
+              child: Stack(
                 children: [
-                  Expanded(
-                    child: _TypeButton(
-                      label: 'Gasto',
-                      icon: Icons.trending_down,
-                      color: AppColors.expense,
-                      selected: isExpense,
-                      onTap: () => _setType(MovementType.expense),
+                  AnimatedAlign(
+                    duration: const Duration(milliseconds: 260),
+                    curve: Curves.easeOutCubic,
+                    alignment: isExpense ? Alignment.centerLeft : Alignment.centerRight,
+                    child: FractionallySizedBox(
+                      widthFactor: 0.5,
+                      heightFactor: 1,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 260),
+                        decoration: BoxDecoration(
+                          color: isExpense ? AppColors.expense : AppColors.income,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: _TypeButton(
-                      label: 'Ingreso',
-                      icon: Icons.trending_up,
-                      color: AppColors.income,
-                      selected: !isExpense,
-                      onTap: () => _setType(MovementType.income),
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _TypeButton(
+                          label: 'Gasto',
+                          icon: Icons.trending_down,
+                          selected: isExpense,
+                          onTap: () => _setType(MovementType.expense),
+                        ),
+                      ),
+                      Expanded(
+                        child: _TypeButton(
+                          label: 'Ingreso',
+                          icon: Icons.trending_up,
+                          selected: !isExpense,
+                          onTap: () => _setType(MovementType.income),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -474,12 +507,18 @@ class _SaldoTabButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: selected ? AppColors.urban700 : Colors.transparent,
+      color: Colors.transparent,
       borderRadius: BorderRadius.circular(6),
       child: InkWell(
         borderRadius: BorderRadius.circular(6),
         onTap: onTap,
-        child: Padding(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          decoration: BoxDecoration(
+            color: selected ? AppColors.urban700 : Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
+          ),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
           child: Text(
             label,
@@ -498,14 +537,12 @@ class _SaldoTabButton extends StatelessWidget {
 class _TypeButton extends StatelessWidget {
   final String label;
   final IconData icon;
-  final Color color;
   final bool selected;
   final VoidCallback onTap;
 
   const _TypeButton({
     required this.label,
     required this.icon,
-    required this.color,
     required this.selected,
     required this.onTap,
   });
@@ -513,15 +550,13 @@ class _TypeButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: selected ? color : Colors.transparent,
-      borderRadius: BorderRadius.circular(10),
+      color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
         onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Center(
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Icon(icon, size: 14, color: selected ? Colors.white : AppColors.urban300),
               const SizedBox(width: 6),

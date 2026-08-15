@@ -290,34 +290,52 @@ class _EditTransactionScreenState extends State<EditTransactionScreen> {
               ),
               const SizedBox(height: 14),
 
-              // Toggle tipo
+              // Toggle tipo — píldora deslizante.
               Container(
+                height: 40,
                 padding: const EdgeInsets.all(4),
                 decoration: BoxDecoration(
                   color: AppColors.urban950,
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(color: AppColors.urban700),
                 ),
-                child: Row(
+                child: Stack(
                   children: [
-                    Expanded(
-                      child: _TypeButton(
-                        label: 'Gasto',
-                        icon: Icons.trending_down,
-                        color: AppColors.expense,
-                        selected: isExpense,
-                        onTap: () => _setType(MovementType.expense),
+                    AnimatedAlign(
+                      duration: const Duration(milliseconds: 260),
+                      curve: Curves.easeOutCubic,
+                      alignment: isExpense ? Alignment.centerLeft : Alignment.centerRight,
+                      child: FractionallySizedBox(
+                        widthFactor: 0.5,
+                        heightFactor: 1,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 260),
+                          decoration: BoxDecoration(
+                            color: isExpense ? AppColors.expense : AppColors.income,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: _TypeButton(
-                        label: 'Ingreso',
-                        icon: Icons.trending_up,
-                        color: AppColors.income,
-                        selected: !isExpense,
-                        onTap: () => _setType(MovementType.income),
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _TypeButton(
+                            label: 'Gasto',
+                            icon: Icons.trending_down,
+                            selected: isExpense,
+                            onTap: () => _setType(MovementType.expense),
+                          ),
+                        ),
+                        Expanded(
+                          child: _TypeButton(
+                            label: 'Ingreso',
+                            icon: Icons.trending_up,
+                            selected: !isExpense,
+                            onTap: () => _setType(MovementType.income),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -404,14 +422,12 @@ class _EditTransactionScreenState extends State<EditTransactionScreen> {
 class _TypeButton extends StatelessWidget {
   final String label;
   final IconData icon;
-  final Color color;
   final bool selected;
   final VoidCallback onTap;
 
   const _TypeButton({
     required this.label,
     required this.icon,
-    required this.color,
     required this.selected,
     required this.onTap,
   });
@@ -419,15 +435,13 @@ class _TypeButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: selected ? color : Colors.transparent,
-      borderRadius: BorderRadius.circular(10),
+      color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
         onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Center(
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Icon(icon, size: 14, color: selected ? Colors.white : AppColors.urban300),
               const SizedBox(width: 6),

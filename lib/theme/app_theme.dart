@@ -31,6 +31,19 @@ class AppTheme {
         secondary: AppColors.urbanBlue,
         surface: AppColors.urban900,
         error: AppColors.expense,
+        // Sin esto, Material 3 tiñe de verde las superficies elevadas
+        // (bottom sheets, diálogos) al superponer un overlay basado en un
+        // tono por defecto que no forma parte de la paleta "urban".
+        surfaceTint: Colors.transparent,
+      ),
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: AppColors.urban900,
+        modalBackgroundColor: AppColors.urban900,
+        surfaceTintColor: Colors.transparent,
+      ),
+      dialogTheme: const DialogThemeData(
+        backgroundColor: AppColors.urban900,
+        surfaceTintColor: Colors.transparent,
       ),
       textTheme: GoogleFonts.plusJakartaSansTextTheme(base.textTheme).apply(
         bodyColor: AppColors.urban100,

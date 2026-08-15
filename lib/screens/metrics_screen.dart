@@ -68,7 +68,9 @@ class _MetricsScreenState extends State<MetricsScreen> {
                   return Expanded(
                     child: GestureDetector(
                       onTap: () => setState(() => _period = p),
-                      child: Container(
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeOut,
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         decoration: BoxDecoration(
                           color: selected ? AppColors.urban700 : Colors.transparent,
@@ -172,7 +174,24 @@ class _SummaryStat extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0.5)),
           const SizedBox(height: 2),
-          Text(value, style: AppTheme.display(size: 15, color: color)),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            transitionBuilder: (child, animation) => FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.25),
+                  end: Offset.zero,
+                ).animate(animation),
+                child: child,
+              ),
+            ),
+            child: Text(
+              value,
+              key: ValueKey(value),
+              style: AppTheme.display(size: 15, color: color),
+            ),
+          ),
         ],
       ),
     );
@@ -236,11 +255,19 @@ class _CategorySection extends StatelessWidget {
                   const SizedBox(height: 4),
                   ClipRRect(
                     borderRadius: BorderRadius.circular(6),
-                    child: LinearProgressIndicator(
-                      value: total > 0 ? (ct.amount / total).clamp(0, 1) : 0,
-                      minHeight: 6,
-                      backgroundColor: AppColors.urban700,
-                      valueColor: AlwaysStoppedAnimation<Color>(barColor),
+                    child: TweenAnimationBuilder<double>(
+                      duration: const Duration(milliseconds: 350),
+                      curve: Curves.easeOut,
+                      tween: Tween<double>(
+                        begin: 0,
+                        end: total > 0 ? (ct.amount / total).clamp(0, 1) : 0,
+                      ),
+                      builder: (context, animatedValue, _) => LinearProgressIndicator(
+                        value: animatedValue,
+                        minHeight: 6,
+                        backgroundColor: AppColors.urban700,
+                        valueColor: AlwaysStoppedAnimation<Color>(barColor),
+                      ),
                     ),
                   ),
                 ],

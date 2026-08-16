@@ -25,7 +25,7 @@ class DBHelper {
 
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -93,6 +93,58 @@ class DBHelper {
           whereArgs: [entry.key],
         );
       }
+    }
+    if (oldVersion < 3) {
+      await _dropLegacyEmojiColumns(db);
+    }
+  }
+
+  /// La migración v1→v2 agregó `icon_key`/`category_icon_key` pero dejó
+  /// las columnas viejas `emoji`/`category_emoji` con su restricción
+  /// NOT NULL original (SQLite no permite quitar un NOT NULL con ALTER
+  /// TABLE), lo que hacía fallar cualquier INSERT nuevo. Se reconstruyen
+  /// ambas tablas sin esas columnas, preservando categorías y movimientos.
+  Future<void> _dropLegacyEmojiColumns(Database db) async {
+    final categoryColumns = await db.rawQuery('PRAGMA table_info(categories)');
+    if (categoryColumns.any((c) => c['name'] == 'emoji')) {
+      await db.execute('''
+        CREATE TABLE categories_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          icon_key TEXT NOT NULL DEFAULT 'other',
+          is_default INTEGER NOT NULL DEFAULT 0
+        )
+      ''');
+      await db.execute('''
+        INSERT INTO categories_new (id, name, icon_key, is_default)
+        SELECT id, name, icon_key, is_default FROM categories
+      ''');
+      await db.execute('DROP TABLE categories');
+      await db.execute('ALTER TABLE categories_new RENAME TO categories');
+    }
+
+    final txColumns = await db.rawQuery('PRAGMA table_info(transactions)');
+    if (txColumns.any((c) => c['name'] == 'category_emoji')) {
+      await db.execute('''
+        CREATE TABLE transactions_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          amount REAL NOT NULL,
+          type TEXT NOT NULL,
+          category_id INTEGER NOT NULL,
+          category_name TEXT NOT NULL,
+          category_icon_key TEXT NOT NULL DEFAULT 'other',
+          note TEXT,
+          date TEXT NOT NULL
+        )
+      ''');
+      await db.execute('''
+        INSERT INTO transactions_new
+          (id, amount, type, category_id, category_name, category_icon_key, note, date)
+        SELECT id, amount, type, category_id, category_name, category_icon_key, note, date
+        FROM transactions
+      ''');
+      await db.execute('DROP TABLE transactions');
+      await db.execute('ALTER TABLE transactions_new RENAME TO transactions');
     }
   }
 

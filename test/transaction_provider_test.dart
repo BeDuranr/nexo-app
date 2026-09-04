@@ -94,6 +94,29 @@ void main() {
       expect(amounts, [2, 3]);
     });
 
+    test('con una referencia pasada devuelve ese periodo, no el actual', () {
+      final provider = _TestableProvider([
+        _tx(amount: 111, type: MovementType.expense, date: DateTime(2026, 7, 15)),
+        _tx(amount: 222, type: MovementType.expense, date: DateTime(2026, 8, 15)),
+        _tx(amount: 333, type: MovementType.expense, date: DateTime(2026, 9, 15)),
+      ]);
+
+      // Es lo que usa el navegador de periodo de Métricas para revisar
+      // meses anteriores.
+      final julio = DateTime(2026, 7, 1);
+      expect(
+        provider.transactionsInPeriod(MetricPeriod.month, reference: julio)
+            .map((t) => t.amount),
+        [111],
+      );
+      expect(provider.totalExpenseInPeriod(MetricPeriod.month, reference: julio), 111);
+
+      final rango = provider.periodRange(MetricPeriod.month, reference: julio);
+      expect(rango.start, DateTime(2026, 7, 1));
+      expect(rango.end.month, 7);
+      expect(rango.end.day, 31);
+    });
+
     test('el mes incluye el último instante del último día', () {
       final provider = _TestableProvider([
         _tx(amount: 5, type: MovementType.expense, date: DateTime(2026, 9, 30, 23, 59, 59)),

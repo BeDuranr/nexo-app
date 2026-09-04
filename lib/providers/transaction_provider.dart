@@ -101,9 +101,15 @@ class TransactionProvider extends ChangeNotifier {
 
   // ---------- Métricas ----------
 
-  /// Rango cerrado del periodo. El extremo superior importa: la app
-  /// permite registrar movimientos con fecha futura, y sin él un ingreso
-  /// de diciembre entraba en los totales de "Semana".
+  /// Rango cerrado del periodo que contiene a [reference] (por defecto,
+  /// hoy). Además de los cálculos, lo usa la pantalla de Métricas para
+  /// rotular el periodo que se está viendo.
+  ({DateTime start, DateTime end}) periodRange(MetricPeriod period, {DateTime? reference}) =>
+      _periodRange(period, reference ?? DateTime.now());
+
+  /// El extremo superior importa: la app permite registrar movimientos
+  /// con fecha futura, y sin él un ingreso de diciembre entraba en los
+  /// totales de "Semana".
   ({DateTime start, DateTime end}) _periodRange(MetricPeriod period, DateTime now) {
     switch (period) {
       case MetricPeriod.week:

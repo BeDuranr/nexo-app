@@ -17,6 +17,38 @@ class MetricsScreen extends StatefulWidget {
 class _MetricsScreenState extends State<MetricsScreen> {
   MetricPeriod _period = MetricPeriod.month;
 
+  // Fecha dentro del periodo que se está mirando. Cambiarla permite
+  // revisar meses (o semanas y años) anteriores sin tocar los datos.
+  DateTime _reference = DateTime.now();
+
+  /// Avanza o retrocede un periodo completo, en la unidad que esté
+  /// seleccionada. Se usa el constructor de DateTime y no una Duration
+  /// para que el cambio de hora no corra el resultado un día.
+  void _shiftPeriod(int delta) {
+    setState(() {
+      _reference = switch (_period) {
+        MetricPeriod.week =>
+          DateTime(_reference.year, _reference.month, _reference.day + 7 * delta),
+        MetricPeriod.month => DateTime(_reference.year, _reference.month + delta, 1),
+        MetricPeriod.year => DateTime(_reference.year + delta, 1, 1),
+      };
+    });
+  }
+
+  String _periodLabel(({DateTime start, DateTime end}) range) {
+    switch (_period) {
+      case MetricPeriod.week:
+        final from = DateFormat('d MMM', 'es_CL').format(range.start);
+        final to = DateFormat('d MMM', 'es_CL').format(range.end);
+        return '$from – $to';
+      case MetricPeriod.month:
+        final label = DateFormat('MMMM yyyy', 'es_CL').format(range.start);
+        return label[0].toUpperCase() + label.substring(1);
+      case MetricPeriod.year:
+        return DateFormat('yyyy', 'es_CL').format(range.start);
+    }
+  }
+
   /// Un decimal en los miles: redondear a entero mostraba $1.500 como
   /// "$2k", y en pesos casi todos los montos caen en ese rango.
   static final _compact = NumberFormat('#,##0.#', 'es_CL');
@@ -41,12 +73,18 @@ class _MetricsScreenState extends State<MetricsScreen> {
     if (txProvider.loading && txProvider.transactions.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
-    final income = txProvider.totalIncomeInPeriod(_period);
-    final expense = txProvider.totalExpenseInPeriod(_period);
+    final income = txProvider.totalIncomeInPeriod(_period, reference: _reference);
+    final expense = txProvider.totalExpenseInPeriod(_period, reference: _reference);
     final periodBalance = income - expense;
 
-    final expenseTotals = txProvider.categoryTotals(_period, MovementType.expense);
-    final incomeTotals = txProvider.categoryTotals(_period, MovementType.income);
+    final expenseTotals =
+        txProvider.categoryTotals(_period, MovementType.expense, reference: _reference);
+    final incomeTotals =
+        txProvider.categoryTotals(_period, MovementType.income, reference: _reference);
+
+    final range = txProvider.periodRange(_period, reference: _reference);
+    final now = DateTime.now();
+    final isCurrentPeriod = !now.isBefore(range.start) && !now.isAfter(range.end);
 
     return SafeArea(
       child: SingleChildScrollView(
@@ -75,6 +113,8 @@ class _MetricsScreenState extends State<MetricsScreen> {
                   };
                   return Expanded(
                     child: GestureDetector(
+                      // Cambiar de unidad conserva la fecha que se está
+                      // mirando: de "Septiembre" a "Año" se pasa a 2026.
                       onTap: () => setState(() => _period = p),
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 200),
@@ -98,6 +138,17 @@ class _MetricsScreenState extends State<MetricsScreen> {
                   );
                 }).toList(),
               ),
+            ),
+            const SizedBox(height: 10),
+
+            // Navegador del periodo: permite revisar meses (o semanas y
+            // años) anteriores, no solo el actual.
+            _PeriodNavigator(
+              label: _periodLabel(range),
+              isCurrent: isCurrentPeriod,
+              onPrevious: () => _shiftPeriod(-1),
+              onNext: () => _shiftPeriod(1),
+              onBackToToday: () => setState(() => _reference = DateTime.now()),
             ),
             const SizedBox(height: 16),
 
@@ -151,6 +202,73 @@ class _MetricsScreenState extends State<MetricsScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Flechas para moverse entre periodos, con el rango visible al centro.
+/// Mismo patrón que el selector de mes del Historial, para que las dos
+/// pantallas se naveguen igual.
+class _PeriodNavigator extends StatelessWidget {
+  final String label;
+  final bool isCurrent;
+  final VoidCallback onPrevious;
+  final VoidCallback onNext;
+  final VoidCallback onBackToToday;
+
+  const _PeriodNavigator({
+    required this.label,
+    required this.isCurrent,
+    required this.onPrevious,
+    required this.onNext,
+    required this.onBackToToday,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+      decoration: BoxDecoration(
+        color: AppColors.urban900,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.urban700),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          IconButton(
+            onPressed: onPrevious,
+            icon: const Icon(Icons.chevron_left, color: AppColors.urban300),
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Periodo anterior',
+          ),
+          Flexible(
+            child: GestureDetector(
+              onTap: isCurrent ? null : onBackToToday,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    label,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white),
+                  ),
+                  if (!isCurrent)
+                    const Text('Volver a hoy',
+                        style: TextStyle(fontSize: 9, color: AppColors.urbanBlue)),
+                ],
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: onNext,
+            icon: const Icon(Icons.chevron_right, color: AppColors.urban300),
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Periodo siguiente',
+          ),
+        ],
       ),
     );
   }

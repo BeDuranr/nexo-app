@@ -73,5 +73,16 @@ const List<Color> categoryIconColors = [
 
 IconData iconForKey(String key) => categoryIcons[key] ?? Icons.category;
 
-Color colorForKey(String key) =>
-    categoryIconColors[key.hashCode.abs() % categoryIconColors.length];
+/// Índice de cada clave dentro del catálogo, calculado una sola vez.
+final Map<String, int> _iconKeyOrder = {
+  for (final (index, key) in categoryIcons.keys.indexed) key: index,
+};
+
+/// Color de la categoría, derivado de la **posición** de su ícono en el
+/// catálogo. Antes se usaba `key.hashCode`, que no está garantizado
+/// estable entre versiones de Dart: los colores podían cambiar solos tras
+/// actualizar Flutter.
+Color colorForKey(String key) {
+  final index = _iconKeyOrder[key] ?? _iconKeyOrder['other'] ?? 0;
+  return categoryIconColors[index % categoryIconColors.length];
+}

@@ -11,6 +11,11 @@ class DBHelper {
   DBHelper._internal();
   static final DBHelper instance = DBHelper._internal();
 
+  /// Versión actual del schema. Todo cambio va por un paso nuevo de
+  /// [_onUpgrade]: hay datos reales en producción, `_onCreate` solo
+  /// describe cómo nace una instalación desde cero.
+  static const int schemaVersion = 4;
+
   Database? _db;
 
   Future<Database> get database async {
@@ -22,16 +27,18 @@ class DBHelper {
   Future<Database> _initDB() async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, 'nexo.db');
-
     return openDatabase(
       path,
-      version: 3,
-      onCreate: _onCreate,
-      onUpgrade: _onUpgrade,
+      version: schemaVersion,
+      onCreate: onCreate,
+      onUpgrade: onUpgrade,
     );
   }
 
-  Future<void> _onCreate(Database db, int version) async {
+  /// Expuesto (junto con [onUpgrade]) para que los tests puedan abrir una
+  /// base sintética con `sqflite_common_ffi` sin pasar por el filesystem
+  /// del dispositivo.
+  Future<void> onCreate(Database db, int version) async {
     // Nota: las categorías NO tienen un campo de tipo (gasto/ingreso).
     // Una misma categoría (ej. "Freelance") puede usarse para ambos
     // tipos de movimiento; el tipo se elige aparte en el toggle.
@@ -57,45 +64,57 @@ class DBHelper {
       )
     ''');
 
+    await _createIndexes(db);
     await _seedDefaultCategories(db);
   }
 
-  /// Migra instalaciones existentes (v1, con emoji) a v2 (con ícono),
-  /// sin perder categorías ni movimientos ya guardados.
-  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+  /// Migra instalaciones existentes sin perder categorías ni movimientos:
+  /// v1→v2 pasó de emoji a `icon_key`, v2→v3 eliminó las columnas viejas
+  /// que habían quedado NOT NULL, v3→v4 agrega los índices y re-sincroniza
+  /// los datos denormalizados.
+  Future<void> onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
-      await db.execute("ALTER TABLE categories ADD COLUMN icon_key TEXT NOT NULL DEFAULT 'other'");
-      await db.execute(
-          "ALTER TABLE transactions ADD COLUMN category_icon_key TEXT NOT NULL DEFAULT 'other'");
-
-      const emojiToIconKey = {
-        '🚇': 'train',
-        '🍔': 'food',
-        '☕': 'coffee',
-        '🏠': 'home',
-        '💊': 'health',
-        '💼': 'briefcase',
-        '💻': 'laptop',
-        '📦': 'other',
-      };
-
-      for (final entry in emojiToIconKey.entries) {
-        await db.update(
-          'categories',
-          {'icon_key': entry.value},
-          where: 'emoji = ?',
-          whereArgs: [entry.key],
-        );
-        await db.update(
-          'transactions',
-          {'category_icon_key': entry.value},
-          where: 'category_emoji = ?',
-          whereArgs: [entry.key],
-        );
-      }
+      await _migrateEmojiToIconKey(db);
     }
     if (oldVersion < 3) {
       await _dropLegacyEmojiColumns(db);
+    }
+    if (oldVersion < 4) {
+      await _createIndexes(db);
+      await _resyncDenormalizedCategories(db);
+    }
+  }
+
+  Future<void> _migrateEmojiToIconKey(Database db) async {
+    await db.execute(
+        "ALTER TABLE categories ADD COLUMN icon_key TEXT NOT NULL DEFAULT 'other'");
+    await db.execute(
+        "ALTER TABLE transactions ADD COLUMN category_icon_key TEXT NOT NULL DEFAULT 'other'");
+
+    const emojiToIconKey = {
+      '\u{1F687}': 'train',
+      '\u{1F354}': 'food',
+      '\u{2615}': 'coffee',
+      '\u{1F3E0}': 'home',
+      '\u{1F48A}': 'health',
+      '\u{1F4BC}': 'briefcase',
+      '\u{1F4BB}': 'laptop',
+      '\u{1F4E6}': 'other',
+    };
+
+    for (final entry in emojiToIconKey.entries) {
+      await db.update(
+        'categories',
+        {'icon_key': entry.value},
+        where: 'emoji = ?',
+        whereArgs: [entry.key],
+      );
+      await db.update(
+        'transactions',
+        {'category_icon_key': entry.value},
+        where: 'category_emoji = ?',
+        whereArgs: [entry.key],
+      );
     }
   }
 
@@ -148,6 +167,27 @@ class DBHelper {
     }
   }
 
+  Future<void> _createIndexes(Database db) async {
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category_id)');
+  }
+
+  /// Hasta v3, editar una categoría no tocaba el nombre ni el ícono ya
+  /// copiados en sus movimientos, así que las Métricas y la búsqueda del
+  /// Historial mostraban datos viejos. Esto repara lo desincronizado.
+  /// Los movimientos de categorías **eliminadas** quedan intactos: ahí la
+  /// copia guardada es lo único que los mantiene legibles.
+  Future<void> _resyncDenormalizedCategories(Database db) async {
+    await db.execute('''
+      UPDATE transactions
+         SET category_name     = (SELECT name     FROM categories WHERE categories.id = transactions.category_id),
+             category_icon_key = (SELECT icon_key FROM categories WHERE categories.id = transactions.category_id)
+       WHERE category_id IN (SELECT id FROM categories)
+    ''');
+  }
+
   Future<void> _seedDefaultCategories(Database db) async {
     final defaults = <CategoryModel>[
       const CategoryModel(name: 'Metro', iconKey: 'train', isDefault: true),
@@ -178,16 +218,32 @@ class DBHelper {
     return db.insert('categories', category.toMap()..remove('id'));
   }
 
+  /// Guarda la categoría y propaga el nombre y el ícono nuevos a los
+  /// movimientos que la usan, en una sola transacción. Sin esto los
+  /// movimientos viejos quedaban con la copia congelada y cada pantalla
+  /// mostraba algo distinto.
   Future<int> updateCategory(CategoryModel category) async {
     final db = await database;
-    return db.update(
-      'categories',
-      category.toMap(),
-      where: 'id = ?',
-      whereArgs: [category.id],
-    );
+    return db.transaction((txn) async {
+      final updated = await txn.update(
+        'categories',
+        category.toMap(),
+        where: 'id = ?',
+        whereArgs: [category.id],
+      );
+      await txn.update(
+        'transactions',
+        {'category_name': category.name, 'category_icon_key': category.iconKey},
+        where: 'category_id = ?',
+        whereArgs: [category.id],
+      );
+      return updated;
+    });
   }
 
+  /// Elimina la categoría de la lista. Los movimientos ya registrados se
+  /// dejan como están: conservan el nombre y el ícono copiados, que es
+  /// justamente para lo que existen esas columnas.
   Future<int> deleteCategory(int id) async {
     final db = await database;
     return db.delete('categories', where: 'id = ?', whereArgs: [id]);
@@ -197,7 +253,9 @@ class DBHelper {
 
   Future<List<TransactionModel>> getTransactions() async {
     final db = await database;
-    final rows = await db.query('transactions', orderBy: 'date DESC');
+    // El desempate por id mantiene un orden estable entre movimientos con
+    // la misma marca de tiempo.
+    final rows = await db.query('transactions', orderBy: 'date DESC, id DESC');
     return rows.map(TransactionModel.fromMap).toList();
   }
 
@@ -219,7 +277,6 @@ class DBHelper {
   /// Reinserta una transacción eliminada (usado por la función "Deshacer").
   Future<int> restoreTransaction(TransactionModel tx) async {
     final db = await database;
-    final map = tx.toMap();
-    return db.insert('transactions', map);
+    return db.insert('transactions', tx.toMap());
   }
 }

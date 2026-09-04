@@ -27,33 +27,47 @@ class _HistoryScreenState extends State<HistoryScreen> {
   String _searchQuery = '';
   HistoryFilters _filters = const HistoryFilters.empty();
 
+  // La búsqueda es mensual por defecto; el usuario puede ampliarla a todo
+  // el historial cuando el mes no da resultados.
+  bool _searchAllMonths = false;
+
   @override
   void initState() {
     super.initState();
     final now = DateTime.now();
     _selectedMonth = DateTime(now.year, now.month, 1);
-    _searchController.addListener(() {
-      setState(() => _searchQuery = _searchController.text.trim().toLowerCase());
-    });
+    _searchController.addListener(_onSearchChanged);
   }
 
   @override
   void dispose() {
+    _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _onSearchChanged() {
+    final query = _searchController.text.trim().toLowerCase();
+    if (query == _searchQuery) return;
+    setState(() {
+      _searchQuery = query;
+      // Cada búsqueda nueva vuelve a empezar acotada al mes.
+      _searchAllMonths = false;
+    });
   }
 
   void _changeMonth(int delta) {
     setState(() {
       _selectedMonth = DateTime(_selectedMonth.year, _selectedMonth.month + delta, 1);
+      _searchAllMonths = false;
     });
   }
 
   bool _isSameMonth(DateTime date) =>
       date.year == _selectedMonth.year && date.month == _selectedMonth.month;
 
-  bool _matchesFilters(TransactionModel t) {
-    if (!_isSameMonth(t.date)) return false;
+  bool _matchesFilters(TransactionModel t, {required bool ignoreMonth}) {
+    if (!ignoreMonth && !_isSameMonth(t.date)) return false;
     if (_filters.type != null && t.type != _filters.type) return false;
     if (_filters.categoryIds.isNotEmpty && !_filters.categoryIds.contains(t.categoryId)) {
       return false;
@@ -72,16 +86,81 @@ class _HistoryScreenState extends State<HistoryScreen> {
       current: _filters,
       categories: categories,
     );
-    if (result != null) {
+    if (result != null && mounted) {
       setState(() => _filters = result);
     }
+  }
+
+  Future<void> _deleteTransaction(TransactionModel tx) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final provider = context.read<TransactionProvider>();
+    final deleted = await provider.deleteTransaction(tx);
+
+    if (!deleted) {
+      messenger.showSnackBar(
+        const SnackBar(
+          backgroundColor: AppColors.expense,
+          content: Text('No se pudo eliminar el movimiento. Intenta de nuevo.',
+              style: TextStyle(color: Colors.white)),
+        ),
+      );
+      return;
+    }
+
+    HapticFeedback.lightImpact();
+    messenger.showSnackBar(
+      SnackBar(
+        backgroundColor: AppColors.urban700,
+        content: const Text('Movimiento eliminado', style: TextStyle(color: Colors.white)),
+        action: SnackBarAction(
+          label: 'DESHACER',
+          textColor: AppColors.urbanBlue,
+          onPressed: provider.undoDelete,
+        ),
+      ),
+    );
+  }
+
+  void _openEditor(TransactionModel tx) {
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        transitionDuration: const Duration(milliseconds: 280),
+        reverseTransitionDuration: const Duration(milliseconds: 220),
+        pageBuilder: (_, animation, __) => EditTransactionScreen(transaction: tx),
+        transitionsBuilder: (_, animation, __, child) {
+          final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+          return FadeTransition(
+            opacity: curved,
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0, 0.06),
+                end: Offset.zero,
+              ).animate(curved),
+              child: child,
+            ),
+          );
+        },
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final txProvider = context.watch<TransactionProvider>();
     final categories = context.watch<CategoryProvider>().categories;
-    final transactions = txProvider.transactions.where(_matchesFilters).toList();
+
+    final isGlobalSearch = _searchAllMonths && _searchQuery.isNotEmpty;
+    final transactions = txProvider.transactions
+        .where((t) => _matchesFilters(t, ignoreMonth: isGlobalSearch))
+        .toList();
+
+    // Cuando el mes no da resultados, ofrecemos ampliar a todo el
+    // historial en vez de dejar al usuario creyendo que no existe.
+    final canWidenSearch = !isGlobalSearch &&
+        _searchQuery.isNotEmpty &&
+        transactions.isEmpty &&
+        txProvider.transactions.any((t) => _matchesFilters(t, ignoreMonth: true));
+
     final hasActiveSearchOrFilters = _searchQuery.isNotEmpty || !_filters.isEmpty;
 
     final monthLabel = DateFormat('MMMM yyyy', 'es_CL').format(_selectedMonth);
@@ -118,7 +197,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   GestureDetector(
                     onTap: isCurrentMonth
                         ? null
-                        : () => setState(() => _selectedMonth = DateTime(now.year, now.month, 1)),
+                        : () => setState(() {
+                              _selectedMonth = DateTime(now.year, now.month, 1);
+                              _searchAllMonths = false;
+                            }),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -152,7 +234,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     style: const TextStyle(fontSize: 12, color: Colors.white),
                     decoration: InputDecoration(
                       isDense: true,
-                      hintText: 'Buscar por nota o categoría...',
+                      hintText: 'Buscar en $capitalizedMonthLabel...',
                       prefixIcon: const Icon(Icons.search, size: 18, color: AppColors.urban300),
                       suffixIcon: _searchQuery.isEmpty
                           ? null
@@ -178,6 +260,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 onClear: () => setState(() => _filters = const HistoryFilters.empty()),
               ),
             ],
+            if (isGlobalSearch) ...[
+              const SizedBox(height: 10),
+              _GlobalSearchBar(
+                monthLabel: capitalizedMonthLabel,
+                onBackToMonth: () => setState(() => _searchAllMonths = false),
+              ),
+            ],
             const SizedBox(height: 10),
 
             const Row(
@@ -194,79 +283,157 @@ class _HistoryScreenState extends State<HistoryScreen> {
             ),
             const SizedBox(height: 12),
             Expanded(
-              child: transactions.isEmpty
-                  ? Center(
-                      child: Text(
-                        hasActiveSearchOrFilters
-                            ? 'Ningún movimiento coincide con la búsqueda o los filtros.'
-                            : 'No hay movimientos en $capitalizedMonthLabel.',
-                        style: const TextStyle(color: AppColors.urban300, fontSize: 12),
-                        textAlign: TextAlign.center,
-                      ),
-                    )
-                  : ListView.builder(
-                      itemCount: transactions.length,
-                      itemBuilder: (context, index) {
-                        final tx = transactions[index];
-                        CategoryModel? category;
-                        for (final c in categories) {
-                          if (c.id == tx.categoryId) {
-                            category = c;
-                            break;
-                          }
-                        }
-                        return TransactionTile(
-                          key: ValueKey(tx.id),
-                          tx: tx,
-                          category: category,
-                          onEdit: () {
-                            Navigator.of(context).push(
-                              PageRouteBuilder(
-                                transitionDuration: const Duration(milliseconds: 280),
-                                reverseTransitionDuration: const Duration(milliseconds: 220),
-                                pageBuilder: (_, animation, __) =>
-                                    EditTransactionScreen(transaction: tx),
-                                transitionsBuilder: (_, animation, __, child) {
-                                  final curved =
-                                      CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
-                                  return FadeTransition(
-                                    opacity: curved,
-                                    child: SlideTransition(
-                                      position: Tween<Offset>(
-                                        begin: const Offset(0, 0.06),
-                                        end: Offset.zero,
-                                      ).animate(curved),
-                                      child: child,
-                                    ),
-                                  );
-                                },
-                              ),
-                            );
-                          },
-                          onDelete: () async {
-                            await context.read<TransactionProvider>().deleteTransaction(tx);
-                            HapticFeedback.lightImpact();
-                            if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                backgroundColor: AppColors.urban700,
-                                content: const Text('Movimiento eliminado',
-                                    style: TextStyle(color: Colors.white)),
-                                action: SnackBarAction(
-                                  label: 'DESHACER',
-                                  textColor: AppColors.urbanBlue,
-                                  onPressed: () =>
-                                      context.read<TransactionProvider>().undoDelete(),
-                                ),
-                              ),
-                            );
-                          },
-                        );
-                      },
-                    ),
+              child: _buildList(
+                txProvider: txProvider,
+                transactions: transactions,
+                categories: categories,
+                isGlobalSearch: isGlobalSearch,
+                canWidenSearch: canWidenSearch,
+                hasActiveSearchOrFilters: hasActiveSearchOrFilters,
+                monthLabel: capitalizedMonthLabel,
+              ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildList({
+    required TransactionProvider txProvider,
+    required List<TransactionModel> transactions,
+    required List<CategoryModel> categories,
+    required bool isGlobalSearch,
+    required bool canWidenSearch,
+    required bool hasActiveSearchOrFilters,
+    required String monthLabel,
+  }) {
+    if (txProvider.loading && txProvider.transactions.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    // Un fallo al abrir o migrar la base no puede pasar por "no hay
+    // movimientos": así fue como el bug del botón de guardar estuvo
+    // invisible hasta que se revisó el código.
+    if (txProvider.lastError != null && txProvider.transactions.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, color: AppColors.expense, size: 28),
+              const SizedBox(height: 8),
+              const Text(
+                'No se pudieron leer los movimientos guardados.',
+                style: TextStyle(color: Colors.white, fontSize: 12),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                txProvider.lastError!,
+                style: const TextStyle(color: AppColors.urban500, fontSize: 9),
+                textAlign: TextAlign.center,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 12),
+              FilledButton.tonalIcon(
+                onPressed: txProvider.load,
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('Reintentar'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (transactions.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              hasActiveSearchOrFilters
+                  ? 'Ningún movimiento coincide con la búsqueda o los filtros.'
+                  : 'No hay movimientos en $monthLabel.',
+              style: const TextStyle(color: AppColors.urban300, fontSize: 12),
+              textAlign: TextAlign.center,
+            ),
+            if (canWidenSearch) ...[
+              const SizedBox(height: 12),
+              FilledButton.tonalIcon(
+                onPressed: () => setState(() => _searchAllMonths = true),
+                icon: const Icon(Icons.travel_explore, size: 16),
+                label: const Text('Buscar en todos los meses'),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: transactions.length,
+      itemBuilder: (context, index) {
+        final tx = transactions[index];
+        CategoryModel? category;
+        for (final c in categories) {
+          if (c.id == tx.categoryId) {
+            category = c;
+            break;
+          }
+        }
+        return TransactionTile(
+          key: ValueKey(tx.id),
+          tx: tx,
+          category: category,
+          // Buscando fuera del mes elegido, el año evita confundir un
+          // movimiento con el de la misma fecha de otro año.
+          showYear: isGlobalSearch,
+          onEdit: () => _openEditor(tx),
+          onDelete: () => _deleteTransaction(tx),
+        );
+      },
+    );
+  }
+}
+
+/// Aviso de que la búsqueda dejó de estar acotada al mes seleccionado.
+class _GlobalSearchBar extends StatelessWidget {
+  final String monthLabel;
+  final VoidCallback onBackToMonth;
+
+  const _GlobalSearchBar({required this.monthLabel, required this.onBackToMonth});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 4, 4, 4),
+      decoration: BoxDecoration(
+        color: AppColors.urbanBlue.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.urbanBlue),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.travel_explore, size: 14, color: AppColors.urbanBlue),
+          const SizedBox(width: 6),
+          const Expanded(
+            child: Text('Buscando en todo el historial',
+                style: TextStyle(fontSize: 10, color: Colors.white)),
+          ),
+          TextButton(
+            onPressed: onBackToMonth,
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text('Volver a $monthLabel', style: const TextStyle(fontSize: 10)),
+          ),
+        ],
       ),
     );
   }
@@ -284,7 +451,7 @@ class _FilterButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final isActive = activeCount > 0;
     return Material(
-      color: isActive ? AppColors.urbanBlue.withOpacity(0.18) : AppColors.urban900,
+      color: isActive ? AppColors.urbanBlue.withValues(alpha: 0.18) : AppColors.urban900,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
@@ -340,9 +507,8 @@ class _ActiveFiltersBar extends StatelessWidget {
       labels.add(filters.type == MovementType.expense ? 'Gastos' : 'Ingresos');
     }
     if (filters.categoryIds.isNotEmpty) {
-      final names = categories
-          .where((c) => filters.categoryIds.contains(c.id))
-          .map((c) => c.name);
+      final names =
+          categories.where((c) => filters.categoryIds.contains(c.id)).map((c) => c.name);
       labels.addAll(names);
     }
 

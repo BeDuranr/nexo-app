@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../models/transaction_model.dart';
@@ -16,16 +17,20 @@ class MetricsScreen extends StatefulWidget {
 class _MetricsScreenState extends State<MetricsScreen> {
   MetricPeriod _period = MetricPeriod.month;
 
+  /// Un decimal en los miles: redondear a entero mostraba $1.500 como
+  /// "$2k", y en pesos casi todos los montos caen en ese rango.
+  static final _compact = NumberFormat('#,##0.#', 'es_CL');
+
   String _formatCompact(double value) {
     final negative = value < 0;
     final v = value.abs();
     String formatted;
     if (v >= 1000000) {
-      formatted = '\$${(v / 1000000).toStringAsFixed(1)}M';
+      formatted = '\$${_compact.format(v / 1000000)}M';
     } else if (v >= 1000) {
-      formatted = '\$${(v / 1000).toStringAsFixed(0)}k';
+      formatted = '\$${_compact.format(v / 1000)}k';
     } else {
-      formatted = '\$${v.toStringAsFixed(0)}';
+      formatted = '\$${v.round()}';
     }
     return negative ? '-$formatted' : formatted;
   }
@@ -33,6 +38,9 @@ class _MetricsScreenState extends State<MetricsScreen> {
   @override
   Widget build(BuildContext context) {
     final txProvider = context.watch<TransactionProvider>();
+    if (txProvider.loading && txProvider.transactions.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
     final income = txProvider.totalIncomeInPeriod(_period);
     final expense = txProvider.totalExpenseInPeriod(_period);
     final periodBalance = income - expense;

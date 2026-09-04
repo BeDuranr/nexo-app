@@ -17,6 +17,10 @@ class TransactionTile extends StatefulWidget {
   /// fue eliminada) se cae a lo que quedó guardado en [tx].
   final CategoryModel? category;
 
+  /// Incluye el año en la fecha. Se usa cuando la lista mezcla meses
+  /// (búsqueda en todo el historial) y "12 sep" sería ambiguo.
+  final bool showYear;
+
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
@@ -24,6 +28,7 @@ class TransactionTile extends StatefulWidget {
     super.key,
     required this.tx,
     required this.category,
+    this.showYear = false,
     required this.onEdit,
     required this.onDelete,
   });
@@ -37,29 +42,36 @@ class _TransactionTileState extends State<TransactionTile>
   static const double _actionsWidth = 152; // 2 botones de 76 c/u
 
   late final AnimationController _controller;
+  Animation<double>? _slide;
   double _offset = 0;
 
   @override
   void initState() {
     super.initState();
     _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 200));
+    // Un único listener sobre el controller: acumularlos por animación
+    // hacía que dos swipes seguidos se pelearan por `_offset`.
+    _controller.addListener(_syncOffset);
   }
 
   @override
   void dispose() {
+    _controller.removeListener(_syncOffset);
     _controller.dispose();
     super.dispose();
   }
 
+  void _syncOffset() {
+    final slide = _slide;
+    if (slide == null) return;
+    setState(() => _offset = slide.value);
+  }
+
   void _animateTo(double target) {
-    final animation = Tween<double>(begin: _offset, end: target).animate(
+    _slide = Tween<double>(begin: _offset, end: target).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeOut),
     );
-    void listener() => setState(() => _offset = animation.value);
-    animation.addListener(listener);
-    _controller.forward(from: 0).whenCompleteOrCancel(() {
-      animation.removeListener(listener);
-    });
+    _controller.forward(from: 0);
   }
 
   void _close() {
@@ -85,7 +97,8 @@ class _TransactionTileState extends State<TransactionTile>
     final tx = widget.tx;
     final isExpense = tx.type == MovementType.expense;
     final color = isExpense ? AppColors.expense : AppColors.income;
-    final formattedAmount = NumberFormat.decimalPattern('es_CL').format(tx.amount);
+    final formattedAmount = NumberFormat.decimalPattern('es_CL').format(tx.amount.round());
+    final datePattern = widget.showYear ? 'd MMM yyyy, HH:mm' : 'd MMM, HH:mm';
     // Prioriza la categoría viva (por si fue editada); si fue borrada,
     // cae a la copia guardada en el movimiento.
     final categoryIconKey = widget.category?.iconKey ?? tx.categoryIconKey;
@@ -151,7 +164,7 @@ class _TransactionTileState extends State<TransactionTile>
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              '${DateFormat('d MMM, HH:mm', 'es_CL').format(tx.date)} • $categoryName',
+                              '${DateFormat(datePattern, 'es_CL').format(tx.date)} • $categoryName',
                               style: const TextStyle(fontSize: 10, color: AppColors.urban300),
                             ),
                           ],

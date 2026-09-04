@@ -43,3 +43,11 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Firma de release (nunca versionar claves)
+/android/key.properties
+**/*.jks
+**/*.keystore
+
+# Artefactos del plugin de Kotlin
+/android/.kotlin/

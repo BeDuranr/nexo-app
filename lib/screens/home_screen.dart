@@ -33,6 +33,13 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  void _onTabTapped(int i) {
+    // Sin esto el teclado del campo de monto sigue abierto sobre el
+    // historial: IgnorePointer bloquea el puntero, pero no el foco.
+    FocusScope.of(context).unfocus();
+    setState(() => _index = i);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -45,9 +52,14 @@ class _HomeScreenState extends State<HomeScreen> {
               opacity: isActive ? 1 : 0,
               duration: const Duration(milliseconds: 220),
               curve: Curves.easeOut,
-              child: IgnorePointer(
-                ignoring: !isActive,
-                child: _screens[i],
+              // Las tres pantallas viven a la vez en el Stack; sin esto
+              // los lectores de pantalla leen también las ocultas.
+              child: ExcludeSemantics(
+                excluding: !isActive,
+                child: IgnorePointer(
+                  ignoring: !isActive,
+                  child: _screens[i],
+                ),
               ),
             ),
           );
@@ -55,7 +67,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _index,
-        onTap: (i) => setState(() => _index = i),
+        onTap: _onTabTapped,
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.add_circle_outline),

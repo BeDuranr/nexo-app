@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
 
@@ -10,6 +11,10 @@ import 'theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Las fuentes van empaquetadas en assets/fonts: sin esto google_fonts
+  // intentaría bajarlas de la red, algo que el release de Android no
+  // puede hacer (no declara INTERNET) y que contradice el "todo local".
+  GoogleFonts.config.allowRuntimeFetching = false;
   await initializeDateFormatting('es_CL');
   runApp(const NexoApp());
 }

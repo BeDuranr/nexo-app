@@ -180,7 +180,7 @@ class _TypeChip extends StatelessWidget {
             duration: const Duration(milliseconds: 150),
             padding: const EdgeInsets.symmetric(vertical: 10),
             decoration: BoxDecoration(
-              color: selected ? color.withOpacity(0.18) : AppColors.urban800,
+              color: selected ? color.withValues(alpha: 0.18) : AppColors.urban800,
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: selected ? color : AppColors.urban700),
             ),
@@ -223,7 +223,7 @@ class _CategoryFilterChip extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: selected ? color.withOpacity(0.18) : AppColors.urban800,
+            color: selected ? color.withValues(alpha: 0.18) : AppColors.urban800,
             borderRadius: BorderRadius.circular(20),
             border: Border.all(color: selected ? color : AppColors.urban700),
           ),

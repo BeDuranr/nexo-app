@@ -48,7 +48,21 @@ Sin esa propagación, las Métricas mostraban el ícono y el nombre viejos, y la
 
 ## Deployment
 
-Sin cuenta de Apple Developer — los builds de iOS se **sideloadean** vía iLoader (Windows) + una Mac prestada para compilar, con re-firma manual aproximadamente cada 7 días (la auto-renovación con AltStore/SideStore no resultó confiable). Tenerlo presente antes de sugerir features específicas de iOS o pasos de build — no hay distribución vía App Store actualmente.
+Sin cuenta de Apple Developer y sin distribución vía App Store. Tenerlo presente antes de sugerir features específicas de iOS.
+
+### iOS: generar el `.ipa` (ya no hace falta una Mac)
+
+La compilación se separó de la firma, así que **no se usa más la Mac prestada**:
+
+1. **Compilar** — GitHub Actions, workflow `.github/workflows/ios-ipa.yml` ("iOS IPA sin firmar"), en un runner macOS. Se dispara a mano desde la pestaña Actions o empujando un tag `v*`. Corre `analyze` y los tests antes de compilar. Tarda ~4 minutos.
+2. **Descargar** — el artifact `nexo-ipa`. GitHub lo entrega comprimido: hay que descomprimirlo y usar el `.ipa` de adentro, no el zip.
+3. **Firmar e instalar** — iLoader en Windows, con el Apple ID gratuito.
+
+El binario sale **sin firmar** a propósito (`flutter build ios --release --no-codesign`, empaquetado en una carpeta `Payload/`): no hay credenciales de Apple en el CI. La firma sigue caducando cada 7 días — eso viene del Apple ID gratuito, no del método de build, y se resuelve re-firmando el mismo `.ipa` sin recompilar. La auto-renovación con AltStore/SideStore no resultó confiable.
+
+Como el bundle id (`com.familia.nexo.nexo`) no cambia, el `.ipa` se instala **encima** de la app existente y conserva la base de datos. No desinstalar.
+
+> Si iOS sigue mostrando el ícono viejo después de reinstalar, suele ser caché del sistema: se actualiza reiniciando el teléfono.
 
 ### Android: respaldo automático
 
@@ -76,6 +90,15 @@ keyPassword=...
 keyAlias=nexo
 storeFile=C:/Users/<usuario>/nexo-release.jks
 ```
+
+### Íconos de la app
+
+`flutter_launcher_icons` los genera desde Windows (`dart run flutter_launcher_icons`), sin Mac. Hay **dos fuentes distintas a propósito**:
+
+- `assets/icon/icon.png` → Android. Trae dibujado su propio cuadrado redondeado, que el ícono adaptativo de Android resuelve bien.
+- `assets/icon/icon_ios.png` → iOS, vía `image_path_ios`. Es una versión **a sangre** (recorte del interior del tile, logo al 60%, de borde a borde). Hace falta porque iOS aplica su propia máscara encima: con el original se veía un borde redondeado dentro de otro.
+
+`ios: true` y `remove_alpha_ios: true` son necesarios — `ios` estuvo en `false` mucho tiempo, y por eso los `.ipa` salían con el logo de Flutter por defecto.
 
 ## Pitfall conocido
 

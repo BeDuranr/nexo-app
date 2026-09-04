@@ -64,6 +64,19 @@ Como el bundle id (`com.familia.nexo.nexo`) no cambia, el `.ipa` se instala **en
 
 > Si iOS sigue mostrando el ícono viejo después de reinstalar, suele ser caché del sistema: se actualiza reiniciando el teléfono.
 
+### Android: generar e instalar el APK
+
+A diferencia de iOS, se compila local en Windows en ~70 segundos. No hace falta CI ni firma aparte.
+
+```bash
+flutter build apk --release --split-per-abi
+adb install -r build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+```
+
+`--split-per-abi` separa por arquitectura: ~19 MB en vez de los ~52 MB del APK único. `arm64-v8a` sirve para cualquier teléfono de los últimos años. También se puede copiar el archivo al teléfono y abrirlo ahí, habilitando "instalar apps desconocidas".
+
+> **La firma ata el APK a esta máquina.** Mientras no exista `key.properties`, el release se firma con `~/.android/debug.keystore`, que es propio de cada equipo y se regenera al año. Si la app instalada en el teléfono se compiló en otra máquina (o con un keystore ya vencido), Android rechaza la actualización con `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. La única salida sería desinstalar, **lo que borra la base de datos**. Ante ese error, no desinstalar sin haber rescatado los datos primero.
+
 ### Android: respaldo automático
 
 `allowBackup="false"` más reglas de exclusión en `res/xml/backup_rules.xml` y `res/xml/data_extraction_rules.xml`. Antes el `nexo.db` completo se subía a Google Drive por default, lo que contradecía el "todo vive solo en el dispositivo". **Consecuencia:** si se pierde el teléfono, se pierden los movimientos — no hay respaldo automático en ningún lado.

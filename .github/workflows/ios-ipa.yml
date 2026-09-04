@@ -1,0 +1,54 @@
+name: iOS IPA sin firmar
+
+# Compila el .ipa en un runner macOS de GitHub, porque Xcode no corre en
+# Windows. El binario sale SIN firmar a proposito: la firma se hace despues
+# en Windows con iLoader, usando el Apple ID gratuito.
+#
+# Se dispara a mano desde la pestana Actions, o al empujar un tag "v*".
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          # Fijada a la version con la que se desarrolla, para que el build
+          # de CI no cambie solo cuando salga una Flutter nueva.
+          flutter-version: '3.44.9'
+          channel: stable
+          cache: true
+
+      - name: Dependencias
+        run: flutter pub get
+
+      # Si esto falla, mejor enterarse antes de instalar en el telefono.
+      - name: Analisis y tests
+        run: |
+          flutter analyze
+          flutter test
+
+      - name: Compilar iOS sin firmar
+        run: flutter build ios --release --no-codesign
+
+      # Un .ipa es un zip con la .app dentro de una carpeta "Payload".
+      - name: Empaquetar el .ipa
+        run: |
+          cd build/ios/iphoneos
+          mkdir -p Payload
+          mv Runner.app Payload/
+          zip -qr nexo.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexo-ipa
+          path: build/ios/iphoneos/nexo.ipa
+          retention-days: 60

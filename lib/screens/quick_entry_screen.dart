@@ -89,8 +89,9 @@ class _QuickEntryScreenState extends State<QuickEntryScreen> {
   }
 }
 
-/// Saldo con selector Mensual (hasta fin del mes de la fecha elegida) /
-/// Histórico (total absoluto de siempre).
+/// Saldo con selector Mensual (neto del mes de la fecha elegida:
+/// ingresos menos gastos de ese mes) / Histórico (acumulado de siempre
+/// hasta hoy, sin contar movimientos con fecha futura).
 class _BalanceCard extends StatelessWidget {
   final DateTime selectedDate;
   final bool showMonthly;
@@ -105,10 +106,12 @@ class _BalanceCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final txProvider = context.watch<TransactionProvider>();
-    final monthEnd = DateTime(selectedDate.year, selectedDate.month + 1, 1)
-        .subtract(const Duration(milliseconds: 1));
-    final displayedBalance =
-        showMonthly ? txProvider.balanceUpTo(monthEnd) : txProvider.balance;
+    // "Mensual" es el neto del mes elegido; "Histórico", el acumulado
+    // hasta hoy. Antes ambos cortaban a fin de mes, asi que sin
+    // movimientos futuros mostraban exactamente lo mismo.
+    final displayedBalance = showMonthly
+        ? txProvider.netInMonth(selectedDate)
+        : txProvider.balance;
     final isNegative = displayedBalance < 0;
     final monthLabel = DateFormat('MMMM', 'es_CL').format(selectedDate);
 
@@ -178,11 +181,11 @@ class _BalanceCard extends StatelessWidget {
               ),
             ),
           ),
-          if (showMonthly) ...[
-            const SizedBox(height: 2),
-            Text('a fin de $monthLabel',
-                style: const TextStyle(fontSize: 9, color: AppColors.urban500)),
-          ],
+          const SizedBox(height: 2),
+          Text(
+            showMonthly ? 'neto de $monthLabel' : 'acumulado hasta hoy',
+            style: const TextStyle(fontSize: 9, color: AppColors.urban500),
+          ),
         ],
       ),
     );

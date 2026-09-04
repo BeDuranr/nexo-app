@@ -14,7 +14,7 @@
 - El campo de monto muestra el separador de miles mientras se escribe (ej. `10.000`).
 - Historial: **un mismo swipe revela tanto editar como borrar** — no un tap aparte para editar.
 - Historial filtrable por mes.
-- El saldo mostrado es el **acumulado hasta la fecha seleccionada dentro de ese mes**, no un mes calendario fijo — distinto al total histórico, que es el total absoluto de todos los tiempos.
+- La tarjeta de saldo tiene dos lecturas distintas, y la diferencia entre ambas es el punto: **Mensual** es el *neto* del mes de la fecha elegida (ingresos menos gastos de ese mes y nada más), e **Histórico** es el acumulado de siempre **hasta hoy**. Ninguna de las dos cuenta movimientos con fecha futura como plata disponible. Hasta septiembre de 2026 las dos cortaban a fin de mes, así que sin movimientos futuros mostraban exactamente el mismo número y el toggle parecía no hacer nada.
 - Al eliminar una transacción se ofrece **"Deshacer"** (vía `restoreTransaction`).
 - Vibración sutil (haptic feedback) al agregar o eliminar un movimiento, como confirmación.
 - Preferencia general por **animaciones fluidas** por sobre cortes duros entre pantallas/estados — ej. el toggle de ingreso/gasto usa un efecto de píldora deslizante, no solo cambio de color. Priorizar este estilo para UI nueva, no asumir cambios de estado instantáneos por defecto.

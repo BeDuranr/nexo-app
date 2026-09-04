@@ -23,12 +23,20 @@ class TransactionProvider extends ChangeNotifier {
   /// sirve para agregar el motivo técnico.
   String? get lastError => _lastError;
 
-  /// Saldo actual: todos los ingresos menos todos los gastos registrados
-  /// hasta ahora (histórico completo, no solo el periodo filtrado).
-  double get balance {
+  /// Saldo disponible hoy: todo lo registrado con fecha hasta el final del
+  /// día de hoy. **No** incluye los movimientos con fecha futura — un
+  /// ingreso cargado para el mes que viene no es plata que ya esté.
+  double get balance => balanceUpTo(_endOfDay(DateTime.now()));
+
+  /// Neto de un mes calendario: ingresos menos gastos de ese mes y nada
+  /// más. Responde "¿cuánto me sobró o me faltó en septiembre?", a
+  /// diferencia de [balance], que es el acumulado de siempre.
+  double netInMonth(DateTime month) {
     double total = 0;
     for (final t in _transactions) {
-      total += t.type == MovementType.income ? t.amount : -t.amount;
+      if (t.date.year == month.year && t.date.month == month.month) {
+        total += t.type == MovementType.income ? t.amount : -t.amount;
+      }
     }
     return total;
   }

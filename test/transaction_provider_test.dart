@@ -38,11 +38,22 @@ void main() {
   group('balance', () {
     test('resta gastos y suma ingresos sobre todo el histórico', () {
       final provider = _TestableProvider([
-        _tx(amount: 1000, type: MovementType.income, date: DateTime(2026, 9, 1)),
-        _tx(amount: 400, type: MovementType.expense, date: DateTime(2026, 9, 2)),
+        _tx(amount: 1000, type: MovementType.income, date: DateTime(2000, 9, 1)),
+        _tx(amount: 400, type: MovementType.expense, date: DateTime(2000, 9, 2)),
       ]);
 
       expect(provider.balance, 600);
+    });
+
+    test('no cuenta la plata que todavía no llegó', () {
+      // Fechas lejanas a proposito, para que el test no dependa de cuando
+      // se corre.
+      final provider = _TestableProvider([
+        _tx(amount: 1000, type: MovementType.income, date: DateTime(2000, 1, 1)),
+        _tx(amount: 5000, type: MovementType.income, date: DateTime(2100, 1, 1)),
+      ]);
+
+      expect(provider.balance, 1000);
     });
 
     test('balanceUpTo ignora los movimientos posteriores a la fecha', () {
@@ -52,7 +63,39 @@ void main() {
       ]);
 
       expect(provider.balanceUpTo(DateTime(2026, 9, 30, 23, 59, 59)), 1000);
-      expect(provider.balance, 6000);
+      expect(provider.balanceUpTo(DateTime(2026, 12, 31)), 6000);
+    });
+  });
+
+  group('netInMonth', () {
+    test('solo cuenta el mes pedido, no el acumulado', () {
+      final provider = _TestableProvider([
+        _tx(amount: 900, type: MovementType.income, date: DateTime(2026, 8, 20)),
+        _tx(amount: 1000, type: MovementType.income, date: DateTime(2026, 9, 5)),
+        _tx(amount: 400, type: MovementType.expense, date: DateTime(2026, 9, 20)),
+        _tx(amount: 700, type: MovementType.expense, date: DateTime(2026, 10, 2)),
+      ]);
+
+      expect(provider.netInMonth(DateTime(2026, 9, 1)), 600);
+      expect(provider.netInMonth(DateTime(2026, 8, 1)), 900);
+      expect(provider.netInMonth(DateTime(2026, 10, 1)), -700);
+    });
+
+    test('el día del mes de referencia da igual', () {
+      final provider = _TestableProvider([
+        _tx(amount: 500, type: MovementType.expense, date: DateTime(2026, 9, 28)),
+      ]);
+
+      expect(provider.netInMonth(DateTime(2026, 9, 1)), -500);
+      expect(provider.netInMonth(DateTime(2026, 9, 30)), -500);
+    });
+
+    test('un mes sin movimientos da cero, no el acumulado anterior', () {
+      final provider = _TestableProvider([
+        _tx(amount: 1000, type: MovementType.income, date: DateTime(2026, 8, 1)),
+      ]);
+
+      expect(provider.netInMonth(DateTime(2026, 9, 1)), 0);
     });
   });
 

@@ -5,8 +5,11 @@ import '../models/category_model.dart';
 import '../models/transaction_model.dart';
 
 /// Acceso centralizado a la base de datos SQLite local de Nexo.
-/// Toda la información vive únicamente en el dispositivo: no hay red
-/// ni cuentas involucradas.
+///
+/// SQLite sigue siendo la única fuente de verdad: la app funciona
+/// completa sin cuenta y sin red. El respaldo en Google Sheets
+/// (`services/sheets_backup_service.dart`) lee de acá y escribe acá al
+/// restaurar, pero nunca es quien manda.
 class DBHelper {
   DBHelper._internal();
   static final DBHelper instance = DBHelper._internal();
@@ -14,7 +17,22 @@ class DBHelper {
   /// Versión actual del schema. Todo cambio va por un paso nuevo de
   /// [_onUpgrade]: hay datos reales en producción, `_onCreate` solo
   /// describe cómo nace una instalación desde cero.
-  static const int schemaVersion = 4;
+  static const int schemaVersion = 5;
+
+  /// Marca de tiempo de la última escritura a categorías o movimientos.
+  /// Comparada contra [settingLastBackup] dice si hay cambios sin
+  /// respaldar, y sobrevive a que se cierre la app.
+  static const String settingDataChangedAt = 'data_modificada';
+
+  /// Marca de tiempo del último respaldo subido con éxito.
+  static const String settingLastBackup = 'ultimo_respaldo';
+
+  /// Id de la planilla de respaldo en Drive. Es solo una caché: si falta,
+  /// la planilla se reencuentra por su `appProperties` en Drive.
+  static const String settingSpreadsheetId = 'respaldo_spreadsheet_id';
+
+  /// Mail de la cuenta de Google conectada, para mostrarlo en Ajustes.
+  static const String settingGoogleAccount = 'cuenta_google';
 
   Database? _db;
 
@@ -65,13 +83,14 @@ class DBHelper {
     ''');
 
     await _createIndexes(db);
+    await _createSettingsTable(db);
     await _seedDefaultCategories(db);
   }
 
   /// Migra instalaciones existentes sin perder categorías ni movimientos:
   /// v1→v2 pasó de emoji a `icon_key`, v2→v3 eliminó las columnas viejas
   /// que habían quedado NOT NULL, v3→v4 agrega los índices y re-sincroniza
-  /// los datos denormalizados.
+  /// los datos denormalizados, v4→v5 agrega la tabla `settings`.
   Future<void> onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
       await _migrateEmojiToIconKey(db);
@@ -83,6 +102,22 @@ class DBHelper {
       await _createIndexes(db);
       await _resyncDenormalizedCategories(db);
     }
+    if (oldVersion < 5) {
+      await _createSettingsTable(db);
+    }
+  }
+
+  /// Clave/valor para lo que no son datos del usuario: la cuenta de Google
+  /// conectada y el estado del respaldo. Va en SQLite y no en
+  /// `shared_preferences` para no sumar una dependencia ni un segundo
+  /// lugar donde buscar el estado de la app.
+  Future<void> _createSettingsTable(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    ''');
   }
 
   Future<void> _migrateEmojiToIconKey(Database db) async {
@@ -205,6 +240,47 @@ class DBHelper {
     }
   }
 
+  // ---------- Preferencias (tabla `settings`) ----------
+
+  Future<String?> getSetting(String key) async {
+    final db = await database;
+    final rows = await db.query('settings',
+        columns: ['value'], where: 'key = ?', whereArgs: [key], limit: 1);
+    if (rows.isEmpty) return null;
+    return rows.first['value'] as String;
+  }
+
+  Future<void> setSetting(String key, String value) async {
+    final db = await database;
+    await db.insert('settings', {'key': key, 'value': value},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> deleteSetting(String key) async {
+    final db = await database;
+    await db.delete('settings', where: 'key = ?', whereArgs: [key]);
+  }
+
+  Future<DateTime?> getSettingAsDate(String key) async {
+    final raw = await getSetting(key);
+    if (raw == null) return null;
+    return DateTime.tryParse(raw);
+  }
+
+  /// Anota que los datos del usuario cambiaron. Lo llama cada escritura a
+  /// categorías o movimientos: es lo que le permite al respaldo saber que
+  /// tiene algo nuevo que subir sin que las pantallas tengan que avisarle.
+  Future<void> _touch(DatabaseExecutor db) async {
+    await db.insert(
+      'settings',
+      {
+        'key': settingDataChangedAt,
+        'value': DateTime.now().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
   // ---------- Categorías ----------
 
   Future<List<CategoryModel>> getCategories() async {
@@ -215,7 +291,9 @@ class DBHelper {
 
   Future<int> insertCategory(CategoryModel category) async {
     final db = await database;
-    return db.insert('categories', category.toMap()..remove('id'));
+    final id = await db.insert('categories', category.toMap()..remove('id'));
+    await _touch(db);
+    return id;
   }
 
   /// Guarda la categoría y propaga el nombre y el ícono nuevos a los
@@ -237,6 +315,7 @@ class DBHelper {
         where: 'category_id = ?',
         whereArgs: [category.id],
       );
+      await _touch(txn);
       return updated;
     });
   }
@@ -246,7 +325,10 @@ class DBHelper {
   /// justamente para lo que existen esas columnas.
   Future<int> deleteCategory(int id) async {
     final db = await database;
-    return db.delete('categories', where: 'id = ?', whereArgs: [id]);
+    final deleted =
+        await db.delete('categories', where: 'id = ?', whereArgs: [id]);
+    await _touch(db);
+    return deleted;
   }
 
   // ---------- Transacciones ----------
@@ -261,22 +343,62 @@ class DBHelper {
 
   Future<int> insertTransaction(TransactionModel tx) async {
     final db = await database;
-    return db.insert('transactions', tx.toMap()..remove('id'));
+    final id = await db.insert('transactions', tx.toMap()..remove('id'));
+    await _touch(db);
+    return id;
   }
 
   Future<int> deleteTransaction(int id) async {
     final db = await database;
-    return db.delete('transactions', where: 'id = ?', whereArgs: [id]);
+    final deleted =
+        await db.delete('transactions', where: 'id = ?', whereArgs: [id]);
+    await _touch(db);
+    return deleted;
   }
 
   Future<int> updateTransaction(TransactionModel tx) async {
     final db = await database;
-    return db.update('transactions', tx.toMap(), where: 'id = ?', whereArgs: [tx.id]);
+    final updated = await db
+        .update('transactions', tx.toMap(), where: 'id = ?', whereArgs: [tx.id]);
+    await _touch(db);
+    return updated;
   }
 
   /// Reinserta una transacción eliminada (usado por la función "Deshacer").
   Future<int> restoreTransaction(TransactionModel tx) async {
     final db = await database;
-    return db.insert('transactions', tx.toMap());
+    final id = await db.insert('transactions', tx.toMap());
+    await _touch(db);
+    return id;
+  }
+
+  // ---------- Restauración desde un respaldo ----------
+
+  /// Reemplaza **todas** las categorías y movimientos por los del
+  /// respaldo, en una sola transacción: si algo falla a mitad de camino,
+  /// la base queda como estaba.
+  ///
+  /// Las categorías se reinsertan **con su id original** a propósito:
+  /// `transactions.category_id` apunta a ellas, y dejar que SQLite
+  /// reasigne los ids haría que los movimientos restaurados terminen
+  /// colgados de la categoría equivocada.
+  Future<void> replaceAllData({
+    required List<CategoryModel> categories,
+    required List<TransactionModel> transactions,
+  }) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('transactions');
+      await txn.delete('categories');
+
+      for (final category in categories) {
+        await txn.insert('categories', category.toMap());
+      }
+      for (final tx in transactions) {
+        await txn.insert('transactions', tx.toMap());
+      }
+
+      await _touch(txn);
+    });
   }
 }

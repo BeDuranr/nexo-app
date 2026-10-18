@@ -22,6 +22,27 @@
 	<string>$(FLUTTER_BUILD_NAME)</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
+	<!-- Client ID del cliente OAuth tipo iOS (Google Cloud Console,
+	     bundle id com.familia.nexo.nexo). No hay client secret y no hace
+	     falta Firebase ni GoogleService-Info.plist. Mientras diga
+	     REEMPLAZAR, Ajustes avisa que falta configurarlo en vez de
+	     tirar un error suelto. Ver docs/respaldo-google.md. -->
+	<key>GIDClientID</key>
+	<string>REEMPLAZAR.apps.googleusercontent.com</string>
+	<!-- El "iOS URL scheme" que muestra la consola: el client ID dado
+	     vuelta. Es obligatorio incluso pasando el client ID desde Dart,
+	     porque es por acá que vuelve el callback del login. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.REEMPLAZAR</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>

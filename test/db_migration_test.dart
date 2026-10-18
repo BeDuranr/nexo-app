@@ -157,6 +157,40 @@ void main() {
     });
   });
 
+  group('migración v4 → v5 (tabla settings)', () {
+    test('crea la tabla sin tocar categorías ni movimientos', () async {
+      final db = await _openLegacyV1(factory);
+      await migrate(db, 1);
+
+      final tables = await db.rawQuery(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'settings'");
+      expect(tables, isNotEmpty);
+
+      // El respaldo no es una excusa para perder datos en el camino.
+      expect((await db.query('transactions')).length, 2);
+      expect((await db.query('categories')).length, 2);
+
+      await db.close();
+    });
+
+    test('es idempotente: volver a correr el paso no falla', () async {
+      final db = await _openLegacyV1(factory);
+      await migrate(db, 1);
+
+      await db.insert('settings',
+          {'key': 'ultimo_respaldo', 'value': '2026-10-18T10:00:00.000'});
+      // Una base que ya pasó por v5 puede volver a recibir el paso si se
+      // reinstala una versión vieja y se actualiza de nuevo.
+      await helper.onUpgrade(db, 4, DBHelper.schemaVersion);
+
+      final rows = await db.query('settings', where: 'key = ?',
+          whereArgs: ['ultimo_respaldo']);
+      expect(rows.single['value'], '2026-10-18T10:00:00.000');
+
+      await db.close();
+    });
+  });
+
   group('updateCategory', () {
     test('propaga nombre e ícono a los movimientos de esa categoría', () async {
       // DBHelper resuelve su propia ruta de base, así que para probar la

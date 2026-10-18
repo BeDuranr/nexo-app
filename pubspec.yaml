@@ -17,6 +17,11 @@ dependencies:
   path: ^1.9.0
   intl: ^0.20.2
   google_fonts: ^6.2.1
+  # Login con Google: da la identidad y el token para el respaldo.
+  google_sign_in: ^7.2.0
+  # Sheets y Drive se llaman por REST a mano. Son cinco endpoints, y
+  # `googleapis` genera clases para la superficie entera de Google.
+  http: ^1.6.0
 
 dev_dependencies:
   flutter_test:

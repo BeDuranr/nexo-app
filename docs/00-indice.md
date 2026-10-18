@@ -6,3 +6,4 @@ Lee solo el archivo relevante a la tarea actual — no cargues todo de una vez.
 |---|---|
 | [`arquitectura.md`](./arquitectura.md) | Stack, estructura de `lib/`, modelo de datos, deployment, pitfall de la copia vieja |
 | [`diseno-ux.md`](./diseno-ux.md) | Sistema de diseño (paleta, tipografía) y convenciones de UX establecidas |
+| [`respaldo-google.md`](./respaldo-google.md) | Login con Google y respaldo en Sheets: cómo funciona, setup en Cloud Console, por qué el scope es `drive.file` |

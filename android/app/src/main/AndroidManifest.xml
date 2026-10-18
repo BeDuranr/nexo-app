@@ -1,6 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Los movimientos viven solo en el dispositivo: sin respaldo
-         automatico a Google Drive ni transferencia entre equipos. -->
+    <!-- Lo necesita el login de Google y el respaldo en Sheets. El
+         release no lo declaraba (solo lo agregaba el manifest de debug),
+         asi que cualquier llamada de red fallaba solo en release. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- El respaldo automatico del sistema sigue desactivado: la copia a
+         Google es explicita y la decide el usuario desde Ajustes, no el
+         backup de Android por default. -->
     <application
         android:label="Nexo"
         android:name="${applicationName}"

@@ -7,16 +7,18 @@
 - **Charts**: ninguno — las barras de Métricas son `LinearProgressIndicator` (`fl_chart` se sacó, no se usaba).
 - **Fonts**: Space Grotesk (display/headings) + Plus Jakarta Sans (body), **empaquetadas** en `assets/fonts/`. Se sigue usando la API de `google_fonts`, pero con `GoogleFonts.config.allowRuntimeFetching = false` en `main()`: el paquete toma los `.ttf` del bundle y nunca sale a la red. Es obligatorio — el release de Android no declara el permiso `INTERNET`, así que la descarga en runtime fallaba y la tipografía caía al tipo del sistema. Los archivos deben llamarse `{Familia}-{Peso}.ttf` (ej. `SpaceGrotesk-Bold.ttf`); si falta un peso, `google_fonts` lo registra en consola y usa el fallback.
 - **Formatting**: `intl` (fechas, separador de miles)
+- **Cuenta y respaldo**: `google_sign_in` + llamadas REST a Sheets y Drive con `http` — ver `docs/respaldo-google.md`.
 
-Sin backend, sin auth, sin login/PIN, sin llamadas de red. Toda la información vive únicamente en el dispositivo. Usuario único (el padre del desarrollador es el primer tester real).
+Sin backend propio y sin PIN. SQLite en el dispositivo sigue siendo la **única fuente de verdad**: la app funciona completa sin conectar ninguna cuenta. Lo único que sale a la red es el respaldo opcional en Google Sheets, que el usuario activa desde Ajustes. Usuario único (el padre del desarrollador es el primer tester real).
 
 ## Estructura (`lib/`)
 
 - `main.dart` — entry point.
-- `db/db_helper.dart` — todo el acceso a SQLite (CRUD de categorías y transacciones, migraciones de schema).
+- `db/db_helper.dart` — todo el acceso a SQLite (CRUD de categorías y transacciones, migraciones de schema, tabla `settings`).
 - `models/` — `category_model.dart`, `transaction_model.dart`.
-- `providers/` — `category_provider.dart`, `transaction_provider.dart` (`ChangeNotifier`, consumidos vía `provider`).
-- `screens/` — `home_screen.dart` (contenedor de tabs), `quick_entry_screen.dart`, `history_screen.dart`, `edit_transaction_screen.dart`, `metrics_screen.dart`.
+- `providers/` — `category_provider.dart`, `transaction_provider.dart`, `backup_provider.dart` (`ChangeNotifier`, consumidos vía `provider`).
+- `services/` — `google_auth_service.dart` y `sheets_backup_service.dart`: lo único del proyecto que habla con la red.
+- `screens/` — `home_screen.dart` (contenedor de tabs), `quick_entry_screen.dart`, `history_screen.dart`, `edit_transaction_screen.dart`, `metrics_screen.dart`, `settings_screen.dart`.
 - `widgets/movement_form.dart` — **formulario de movimiento compartido** por registro y edición (monto, toggle gasto/ingreso, categorías, nota, fecha, barra "Listo"). Antes esas ~250 líneas estaban duplicadas en las dos pantallas. Guarda la categoría como **id** y la resuelve contra `CategoryProvider` en cada build: por eso nunca se guarda un nombre desactualizado, y si la categoría fue eliminada obliga a elegir una en vez de reasignar en silencio.
 - `theme/app_theme.dart` — todo el sistema de diseño (ver `docs/diseno-ux.md`).
 - `widgets/`, `utils/` — componentes compartidos y helpers.
@@ -27,13 +29,16 @@ Sin backend, sin auth, sin login/PIN, sin llamadas de red. Toda la información 
 
 **`transactions`**: `id`, `amount`, `type` (`income`/`expense`), `category_id` + `category_name`/`category_icon_key` denormalizados (se conservan aunque la categoría se edite o elimine después), `note`, `date` (editable — no forzada a "hoy", y la fecha seleccionada persiste entre registros consecutivos para poder cargar varios movimientos con la misma fecha seguidos).
 
-Schema versionado (actualmente **v4**) con migraciones `onUpgrade` en `db_helper.dart`:
+**`settings`**: `key`, `value`. Clave/valor para lo que no son datos del usuario — la cuenta de Google conectada, el id de la planilla de respaldo, la marca de la última escritura y la del último respaldo. Vive en SQLite y no en `shared_preferences` para no sumar una dependencia ni un segundo lugar donde buscar el estado de la app.
+
+Schema versionado (actualmente **v5**) con migraciones `onUpgrade` en `db_helper.dart`:
 
 | Paso | Qué hizo |
 |---|---|
 | v1→v2 | Migró íconos basados en emoji a `icon_key`. |
 | v2→v3 | Reconstruyó ambas tablas para eliminar las columnas `emoji`/`category_emoji`, que habían quedado NOT NULL y hacían fallar todo INSERT nuevo. |
 | v3→v4 | Índices sobre `transactions(date)` y `transactions(category_id)`, y re-sincronización de los nombres/íconos denormalizados que quedaron viejos. |
+| v4→v5 | Tabla `settings` para la cuenta de Google y el estado del respaldo. |
 
 **Todo cambio de schema va por un nuevo paso `onUpgrade`, nunca modificando `_onCreate` directamente** — ya existen datos reales (los del padre del usuario) en producción, esto no es un ambiente de pruebas. `test/db_migration_test.dart` corre las migraciones sobre una base v1 sintética con `sqflite_common_ffi`; conviene extenderlo con cada paso nuevo.
 
@@ -77,9 +82,11 @@ adb install -r build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
 
 > **La firma ata el APK a esta máquina.** Mientras no exista `key.properties`, el release se firma con `~/.android/debug.keystore`, que es propio de cada equipo y se regenera al año. Si la app instalada en el teléfono se compiló en otra máquina (o con un keystore ya vencido), Android rechaza la actualización con `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. La única salida sería desinstalar, **lo que borra la base de datos**. Ante ese error, no desinstalar sin haber rescatado los datos primero.
 
-### Android: respaldo automático
+### Android: respaldo automático del sistema
 
-`allowBackup="false"` más reglas de exclusión en `res/xml/backup_rules.xml` y `res/xml/data_extraction_rules.xml`. Antes el `nexo.db` completo se subía a Google Drive por default, lo que contradecía el "todo vive solo en el dispositivo". **Consecuencia:** si se pierde el teléfono, se pierden los movimientos — no hay respaldo automático en ningún lado.
+`allowBackup="false"` más reglas de exclusión en `res/xml/backup_rules.xml` y `res/xml/data_extraction_rules.xml`. Antes el `nexo.db` completo se subía a Google Drive por default, sin que nadie lo decidiera. Eso sigue desactivado **a propósito**: el respaldo de Nexo ahora es explícito y lo activa el usuario desde Ajustes (ver `docs/respaldo-google.md`), en vez de pasar en silencio.
+
+**Consecuencia:** si el usuario nunca conecta una cuenta de Google, perder el teléfono sigue siendo perder los movimientos.
 
 ### Android: firma de release (pendiente, a propósito)
 

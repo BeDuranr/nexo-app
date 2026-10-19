@@ -1,0 +1,36 @@
+# Publica la carpeta pagina/ en GitHub Pages: inicio, política de
+# privacidad y términos. Son las URLs que pide la pantalla de
+# consentimiento de Google para publicar la app en Producción.
+name: Página pública
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'pagina/**'
+      - '.github/workflows/pagina.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: pagina
+      - id: deployment
+        uses: actions/deploy-pages@v4

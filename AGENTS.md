@@ -90,9 +90,9 @@ Esta sección envejece: verificar contra `git log` antes de confiar en ella.
   - Login probado en iPhone.
   - Keystore de release y login de Android implementados.
   - APK del cuñado compilado.
+  - App de Google **en Producción**, sin verificación requerida. Cualquier cuenta de Google puede conectarse, y la página pública está en `https://beduranr.github.io/nexo-app/`.
 - **Pendiente, en orden:**
-  1. Publicar la app de Google en Producción: quitar el logo, cargar las URLs de `pagina/` y agregar `beduranr.github.io` a los dominios autorizados.
-  2. Probar el login en Android, en el teléfono del cuñado.
-  3. Rescatar los datos del teléfono del papá: `adb backup` mientras siga instalada la versión vieja, y después un script que pase `nexo.db` a la planilla en formato 2.
-  4. Recién entonces, reinstalarle con el keystore nuevo.
+  1. Probar el login en Android, en el teléfono del cuñado.
+  2. Rescatar los datos del teléfono del papá: `adb backup` mientras siga instalada la versión vieja, y después un script que pase `nexo.db` a la planilla en formato 2.
+  3. Recién entonces, reinstalarle con el keystore nuevo.
 - **Menor:** subir la versión, que sigue en `1.4.0+4`.

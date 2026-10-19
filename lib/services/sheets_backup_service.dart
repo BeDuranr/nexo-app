@@ -45,8 +45,16 @@ class SheetsBackupService {
   /// Etiqueta privada de la app sobre el archivo de Drive. Es lo que
   /// permite reencontrar la planilla después de reinstalar la app, cuando
   /// el id guardado en SQLite ya no está.
+  ///
+  /// No es la versión del formato y no debe cambiar nunca: una app que
+  /// busque otro valor no encontraría las planillas ya creadas, y crearía
+  /// una vacía al lado.
   static const String _tagKey = 'nexoRespaldo';
   static const String _tagValue = 'v1';
+
+  /// Versión del contenido de la planilla, anotada en la hoja `info`.
+  /// La 1 tenía encabezados técnicos, fechas ISO y tipos en inglés.
+  static const int _formatVersion = 2;
 
   static const String spreadsheetTitle = 'Nexo — Respaldo';
 
@@ -55,12 +63,32 @@ class SheetsBackupService {
   static const String _sheetInfo = 'info';
 
   static const List<String> _categoryHeader = [
+    'ID',
+    'Nombre',
+    'Ícono',
+    'Por defecto',
+  ];
+  static const List<String> _transactionHeader = [
+    'ID',
+    'Fecha',
+    'Tipo',
+    'Monto',
+    'ID categoría',
+    'Categoría',
+    'Ícono',
+    'Nota',
+  ];
+
+  /// Encabezados del formato 1. Las columnas están en el mismo orden, así
+  /// que se siguen aceptando al restaurar: una planilla vieja que todavía
+  /// no pasó por un respaldo nuevo tiene que poder restaurarse igual.
+  static const List<String> _categoryHeaderV1 = [
     'id',
     'nombre',
     'icono',
     'por_defecto',
   ];
-  static const List<String> _transactionHeader = [
+  static const List<String> _transactionHeaderV1 = [
     'id',
     'fecha',
     'tipo',
@@ -70,6 +98,18 @@ class SheetsBackupService {
     'icono',
     'nota',
   ];
+
+  static const String _expenseLabel = 'Gasto';
+  static const String _incomeLabel = 'Ingreso';
+
+  /// Lo que muestran las celdas de fecha y monto. Es solo formato
+  /// visual: el valor guardado sigue siendo un número, que es lo que se
+  /// lee al restaurar.
+  static const String _datePattern = 'dd/mm/yyyy hh:mm';
+  static const String _amountPattern = r'$#,##0';
+
+  /// Con este locale Sheets agrupa los miles con punto, como la app.
+  static const String _locale = 'es_CL';
 
   Map<String, String> _headers(String token) => {
         'Authorization': 'Bearer $token',
@@ -120,7 +160,7 @@ class SheetsBackupService {
       Uri.parse(_sheetsApi),
       token,
       {
-        'properties': {'title': spreadsheetTitle},
+        'properties': {'title': spreadsheetTitle, 'locale': _locale},
         'sheets': [
           {
             'properties': {'title': _sheetTransactions}
@@ -170,7 +210,7 @@ class SheetsBackupService {
           category.id,
           category.name,
           category.iconKey,
-          category.isDefault ? 1 : 0,
+          category.isDefault ? 'Sí' : 'No',
         ],
     ]);
 
@@ -179,8 +219,8 @@ class SheetsBackupService {
       for (final tx in transactions)
         [
           tx.id,
-          tx.date.toIso8601String(),
-          movementTypeToString(tx.type),
+          dateToSerial(tx.date),
+          tx.type == MovementType.income ? _incomeLabel : _expenseLabel,
           tx.amount,
           tx.categoryId,
           tx.categoryName,
@@ -190,12 +230,146 @@ class SheetsBackupService {
     ]);
 
     await _writeTab(token, spreadsheetId, _sheetInfo, [
-      ['clave', 'valor'],
-      ['actualizado', DateTime.now().toIso8601String()],
-      ['movimientos', transactions.length],
-      ['categorias', categories.length],
-      ['formato', _tagValue],
+      ['Dato', 'Valor'],
+      ['Última actualización', dateToSerial(DateTime.now())],
+      ['Movimientos', transactions.length],
+      ['Categorías', categories.length],
+      ['Formato', _formatVersion],
     ]);
+
+    await _applyFormatting(token, spreadsheetId);
+  }
+
+  /// Negrita y fila fija en los encabezados, y formato de fecha y monto.
+  ///
+  /// Se aplica en cada respaldo porque es idempotente y así también
+  /// alcanza a las planillas creadas antes de que existiera. Si falla no
+  /// se considera un respaldo fallido: los datos ya quedaron escritos, y
+  /// marcar el respaldo como pendiente por un tema visual haría reintentar
+  /// para siempre.
+  Future<void> _applyFormatting(String token, String spreadsheetId) async {
+    try {
+      final body = await _get(
+        Uri.parse('$_sheetsApi/$spreadsheetId')
+            .replace(queryParameters: {'fields': 'sheets.properties'}),
+        token,
+      );
+      final sheetIds = <String, int>{};
+      for (final sheet in (body?['sheets'] as List<dynamic>?) ?? const []) {
+        final props =
+            (sheet as Map<String, dynamic>)['properties'] as Map<String, dynamic>;
+        sheetIds[props['title'] as String] = props['sheetId'] as int;
+      }
+
+      final requests = <Map<String, Object?>>[
+        {
+          'updateSpreadsheetProperties': {
+            'properties': {'locale': _locale},
+            'fields': 'locale',
+          },
+        },
+        for (final id in sheetIds.values) ..._headerRequests(id),
+      ];
+
+      final transactionsId = sheetIds[_sheetTransactions];
+      if (transactionsId != null) {
+        requests
+          ..add(_numberFormat(transactionsId, column: 1, type: 'DATE_TIME',
+              pattern: _datePattern))
+          ..add(_numberFormat(transactionsId, column: 3, type: 'CURRENCY',
+              pattern: _amountPattern));
+      }
+
+      final infoId = sheetIds[_sheetInfo];
+      if (infoId != null) {
+        requests.add(_numberFormat(infoId,
+            column: 1, row: 1, type: 'DATE_TIME', pattern: _datePattern));
+      }
+
+      await _post(
+        Uri.parse('$_sheetsApi/$spreadsheetId:batchUpdate'),
+        token,
+        {'requests': requests},
+      );
+    } on SheetsBackupException {
+      // Ver el comentario del método: el formato es cosmético.
+    }
+  }
+
+  List<Map<String, Object?>> _headerRequests(int sheetId) => [
+        {
+          'repeatCell': {
+            'range': {'sheetId': sheetId, 'startRowIndex': 0, 'endRowIndex': 1},
+            'cell': {
+              'userEnteredFormat': {
+                'textFormat': {'bold': true},
+              },
+            },
+            'fields': 'userEnteredFormat.textFormat.bold',
+          },
+        },
+        {
+          'updateSheetProperties': {
+            'properties': {
+              'sheetId': sheetId,
+              'gridProperties': {'frozenRowCount': 1},
+            },
+            'fields': 'gridProperties.frozenRowCount',
+          },
+        },
+      ];
+
+  /// Formato de número para una columna entera desde la fila 2 (o solo
+  /// para la celda de [row], si se indica).
+  Map<String, Object?> _numberFormat(
+    int sheetId, {
+    required int column,
+    int? row,
+    required String type,
+    required String pattern,
+  }) =>
+      {
+        'repeatCell': {
+          'range': {
+            'sheetId': sheetId,
+            'startRowIndex': row ?? 1,
+            if (row != null) 'endRowIndex': row + 1,
+            'startColumnIndex': column,
+            'endColumnIndex': column + 1,
+          },
+          'cell': {
+            'userEnteredFormat': {
+              'numberFormat': {'type': type, 'pattern': pattern},
+            },
+          },
+          'fields': 'userEnteredFormat.numberFormat',
+        },
+      };
+
+  /// Origen de las fechas de Sheets: el valor de una celda de fecha es la
+  /// cantidad de días desde acá, con la hora como fracción.
+  static final DateTime _sheetsEpoch = DateTime.utc(1899, 12, 30);
+
+  /// Fecha como número de serie de Sheets, para que la celda sea una fecha
+  /// de verdad (ordenable y filtrable) y no texto.
+  ///
+  /// Se toman los componentes de la hora local tal cual, sin pasar por
+  /// UTC: es lo que la app guarda en SQLite, y la celda no tiene zona
+  /// horaria.
+  static double dateToSerial(DateTime date) {
+    final asUtc = DateTime.utc(date.year, date.month, date.day, date.hour,
+        date.minute, date.second, date.millisecond);
+    return asUtc.difference(_sheetsEpoch).inMilliseconds /
+        Duration.millisecondsPerDay;
+  }
+
+  /// Inversa de [dateToSerial]. Se redondea al milisegundo para absorber
+  /// el error del punto flotante.
+  static DateTime serialToDate(num serial) {
+    final utc = _sheetsEpoch.add(Duration(
+        milliseconds: (serial * Duration.millisecondsPerDay).round()));
+    return DateTime(utc.year, utc.month, utc.day, utc.hour, utc.minute,
+        utc.second, utc.millisecond);
   }
 
   /// Lee la planilla y devuelve lo que haya, ya parseado y validado.
@@ -257,7 +431,8 @@ class SheetsBackupService {
   /// datos reales, y se puede verificar sin red.
   List<CategoryModel> parseCategories(List<List<dynamic>> rows) {
     if (rows.isEmpty) return const [];
-    _checkHeader(rows.first, _categoryHeader, _sheetCategories);
+    _checkHeader(
+        rows.first, [_categoryHeader, _categoryHeaderV1], _sheetCategories);
 
     final categories = <CategoryModel>[];
     for (var i = 1; i < rows.length; i++) {
@@ -271,27 +446,46 @@ class SheetsBackupService {
         id: _intOrNull(row, 0),
         name: name,
         iconKey: _textOr(row, 2, 'other'),
-        isDefault: _intOr(row, 3, 0) == 1,
+        isDefault: _isYes(row, 3),
       ));
     }
     return categories;
   }
 
+  /// "Sí" en el formato 2, 1 en el 1. Cualquier otra cosa es "no": que
+  /// una categoría deje de ser por defecto no pierde ningún dato.
+  bool _isYes(List<dynamic> row, int index) {
+    final value = _normalize(_text(row, index));
+    return value == 'si' || value == '1';
+  }
+
   List<TransactionModel> parseTransactions(List<List<dynamic>> rows) {
     if (rows.isEmpty) return const [];
-    _checkHeader(rows.first, _transactionHeader, _sheetTransactions);
+    _checkHeader(rows.first, [_transactionHeader, _transactionHeaderV1],
+        _sheetTransactions);
 
     final transactions = <TransactionModel>[];
     for (var i = 1; i < rows.length; i++) {
       final row = rows[i];
       if (_isBlank(row)) continue;
 
-      final rawDate = _text(row, 1);
-      final date = DateTime.tryParse(rawDate);
+      final date = _dateOrNull(row, 1);
       if (date == null) {
+        final rawDate = _text(row, 1);
         throw SheetsBackupException(
           'La fila ${i + 1} de "$_sheetTransactions" tiene una fecha ilegible.',
           detail: rawDate.isEmpty ? 'vacía' : rawDate,
+        );
+      }
+
+      final type = _typeOrNull(row, 2);
+      if (type == null) {
+        // Antes un tipo desconocido se leía como gasto. Con la columna en
+        // español es fácil tipear "Ingresos" a mano, y convertir en
+        // silencio un ingreso en gasto descuadra todos los saldos.
+        throw SheetsBackupException(
+          'La fila ${i + 1} de "$_sheetTransactions" tiene un tipo ilegible.',
+          detail: '${_text(row, 2)} (se esperaba Gasto o Ingreso)',
         );
       }
 
@@ -306,7 +500,7 @@ class SheetsBackupService {
       transactions.add(TransactionModel(
         id: _intOrNull(row, 0),
         date: date,
-        type: movementTypeFromString(_textOr(row, 2, 'expense')),
+        type: type,
         amount: amount,
         categoryId: _intOr(row, 4, 0),
         categoryName: _textOr(row, 5, 'Sin categoría'),
@@ -317,19 +511,61 @@ class SheetsBackupService {
     return transactions;
   }
 
+  /// Formato 2: número de serie de Sheets (llega como número gracias a
+  /// `UNFORMATTED_VALUE`). Formato 1: texto ISO 8601.
+  DateTime? _dateOrNull(List<dynamic> row, int index) {
+    if (index >= row.length) return null;
+    final cell = row[index];
+    if (cell is num) return serialToDate(cell);
+    return DateTime.tryParse(_text(row, index));
+  }
+
+  MovementType? _typeOrNull(List<dynamic> row, int index) {
+    switch (_normalize(_text(row, index))) {
+      case 'gasto':
+      case 'expense':
+        return MovementType.expense;
+      case 'ingreso':
+      case 'income':
+        return MovementType.income;
+      default:
+        return null;
+    }
+  }
+
   /// La planilla es visible y editable en Drive: si alguien le cambió las
   /// columnas, es mejor negarse que restaurar datos corridos de lugar.
-  void _checkHeader(List<dynamic> row, List<String> expected, String tab) {
-    final actual = [
-      for (var i = 0; i < expected.length; i++) _text(row, i).toLowerCase()
-    ];
-    if (actual.join(',') != expected.join(',')) {
+  ///
+  /// [accepted] trae un encabezado por cada formato que se sabe leer. Se
+  /// comparan sin mayúsculas ni tildes, que no cambian qué columna es cuál.
+  void _checkHeader(
+      List<dynamic> row, List<List<String>> accepted, String tab) {
+    final width = accepted.first.length;
+    final actual = [for (var i = 0; i < width; i++) _normalize(_text(row, i))];
+    final matches = accepted.any(
+        (header) => header.map(_normalize).join(',') == actual.join(','));
+    if (!matches) {
       throw SheetsBackupException(
         'La hoja "$tab" no tiene las columnas esperadas.',
-        detail: 'se esperaba: ${expected.join(', ')}',
+        detail: 'se esperaba: ${accepted.first.join(', ')}',
       );
     }
   }
+
+  static const Map<String, String> _accents = {
+    'á': 'a',
+    'é': 'e',
+    'í': 'i',
+    'ó': 'o',
+    'ú': 'u',
+  };
+
+  String _normalize(String value) => value
+      .trim()
+      .toLowerCase()
+      .split('')
+      .map((char) => _accents[char] ?? char)
+      .join();
 
   bool _isBlank(List<dynamic> row) =>
       row.every((cell) => cell == null || cell.toString().trim().isEmpty);

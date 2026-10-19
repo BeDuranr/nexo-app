@@ -18,9 +18,15 @@ pide restaurar.
 
 La planilla se llama **"Nexo — Respaldo"** y tiene tres hojas:
 
-- `movimientos`: `id, fecha, tipo, monto, categoria_id, categoria, icono, nota`
-- `categorias`: `id, nombre, icono, por_defecto`
-- `info`: cuándo se actualizó y cuántas filas tiene cada hoja
+- `movimientos`: `ID, Fecha, Tipo, Monto, ID categoría, Categoría, Ícono, Nota`
+- `categorias`: `ID, Nombre, Ícono, Por defecto`
+- `info`: cuándo se actualizó, cuántas filas tiene cada hoja y la versión del formato
+
+**Formato 2 (desde octubre de 2026).** La fecha se guarda como fecha real de Sheets (un número de serie, que se ve como `19/10/2026 14:32` y conserva los milisegundos), el tipo es `Gasto`/`Ingreso`, el monto se ve como `$15.000` y "Por defecto" es `Sí`/`No`. El formato visual se reaplica en cada respaldo y es cosmético: si esa llamada falla, el respaldo igual cuenta como hecho.
+
+**Compatibilidad.** El formato 1 (`id, fecha, …` con fechas ISO y `expense`/`income`) se sigue aceptando al restaurar. Las columnas están en el mismo orden en ambos, y los encabezados se comparan sin mayúsculas ni tildes. Un tipo que no sea Gasto ni Ingreso aborta la restauración, en vez de leerse como gasto.
+
+**La etiqueta de Drive `nexoRespaldo=v1` no es la versión del formato** y no debe cambiar: con ella se reencuentra la planilla después de reinstalar.
 
 Cada respaldo **reescribe la planilla completa** (limpia y vuelve a
 escribir). No es incremental a propósito: con este volumen de datos un

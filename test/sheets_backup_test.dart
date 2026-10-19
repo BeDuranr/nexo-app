@@ -1,4 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:nexo/models/category_model.dart';
 import 'package:nexo/models/transaction_model.dart';
 import 'package:nexo/services/sheets_backup_service.dart';
 
@@ -104,6 +109,156 @@ void main() {
 
     test('una planilla vacía no es un error, es un respaldo sin datos', () {
       expect(service.parseTransactions(const []), isEmpty);
+    });
+  });
+
+  group('formato 2 (en español)', () {
+    const header = ['ID', 'Fecha', 'Tipo', 'Monto', 'ID categoría', 'Categoría', 'Ícono', 'Nota'];
+
+    test('lee fechas como número de serie y tipos en español', () {
+      final serial = SheetsBackupService.dateToSerial(DateTime(2026, 10, 19, 14, 32));
+      final rows = <List<dynamic>>[
+        header,
+        [1, serial, 'Gasto', 5000, 1, 'Comida', 'food', ''],
+        [2, serial, 'Ingreso', 350000, 6, 'Sueldo', 'briefcase', ''],
+      ];
+
+      final transactions = service.parseTransactions(rows);
+
+      expect(transactions[0].type, MovementType.expense);
+      expect(transactions[1].type, MovementType.income);
+      expect(transactions[0].date, DateTime(2026, 10, 19, 14, 32));
+    });
+
+    test('el número de serie coincide con el de Sheets', () {
+      // 45000 es el 15/03/2023 en Sheets; la hora va como fracción del día.
+      expect(SheetsBackupService.dateToSerial(DateTime(2023, 3, 15)), 45000);
+      expect(SheetsBackupService.dateToSerial(DateTime(2023, 3, 15, 18)), 45000.75);
+    });
+
+    test('ida y vuelta conserva la fecha al milisegundo', () {
+      final dates = [
+        DateTime(2026, 10, 19, 14, 32, 5, 123),
+        DateTime(2026, 1, 1),
+        DateTime(2026, 12, 31, 23, 59, 59, 999),
+        // Cambio de horario en Chile: la celda no tiene zona horaria, así
+        // que la hora local tiene que volver tal cual.
+        DateTime(2026, 9, 6, 0, 30),
+      ];
+      for (final date in dates) {
+        expect(
+          SheetsBackupService.serialToDate(SheetsBackupService.dateToSerial(date)),
+          date,
+        );
+      }
+    });
+
+    test('compara encabezados sin mayúsculas ni tildes', () {
+      final rows = <List<dynamic>>[
+        ['id', 'fecha', 'tipo', 'monto', 'id categoria', 'categoria', 'icono', 'nota'],
+        [1, 45000, 'gasto', 5000, 1, 'Comida', 'food', ''],
+      ];
+
+      expect(service.parseTransactions(rows).single.type, MovementType.expense);
+    });
+
+    test('se niega si el tipo no es Gasto ni Ingreso', () {
+      // Antes se leía como gasto: un "Ingresos" tipeado a mano habría
+      // restado del saldo en vez de sumar.
+      for (final type in ['Ingresos', '']) {
+        expect(
+          () => service.parseTransactions(<List<dynamic>>[
+            header,
+            [1, 45000, type, 5000, 1, 'Comida', 'food', ''],
+          ]),
+          throwsA(isA<SheetsBackupException>()),
+        );
+      }
+    });
+
+    test('lee "Sí" y "No" en las categorías', () {
+      final rows = <List<dynamic>>[
+        ['ID', 'Nombre', 'Ícono', 'Por defecto'],
+        [1, 'Comida', 'food', 'Sí'],
+        [2, 'Gatos', 'other', 'No'],
+        [3, 'Varios', 'other', 'si'],
+      ];
+
+      expect(service.parseCategories(rows).map((c) => c.isDefault), [true, false, true]);
+    });
+
+    test('lo que sube la app se restaura idéntico', () async {
+      final categories = [
+        const CategoryModel(id: 1, name: 'Comida', iconKey: 'food', isDefault: true),
+        const CategoryModel(id: 7, name: 'Freelance', iconKey: 'laptop'),
+      ];
+      final transactions = [
+        TransactionModel(
+          id: 1,
+          amount: 15000,
+          type: MovementType.expense,
+          categoryId: 1,
+          categoryName: 'Comida',
+          categoryIconKey: 'food',
+          note: 'almuerzo',
+          date: DateTime(2026, 10, 19, 13, 5, 42, 250),
+        ),
+        TransactionModel(
+          id: 2,
+          amount: 420000,
+          type: MovementType.income,
+          categoryId: 7,
+          categoryName: 'Freelance',
+          categoryIconKey: 'laptop',
+          note: '',
+          date: DateTime(2026, 10, 1, 9),
+        ),
+      ];
+
+      // Sheets falso: guarda lo que se escribe en cada hoja y lo devuelve
+      // al leer, como lo haría con `valueInputOption: RAW`.
+      final tabs = <String, List<dynamic>>{};
+      final client = MockClient((request) async {
+        final path = request.url.path;
+        if (path.endsWith(':append')) {
+          final tab = path.split('/values/').last.split('!').first;
+          tabs[tab] = (jsonDecode(request.body) as Map)['values'] as List;
+        } else if (request.method == 'GET' && path.contains('/values/')) {
+          final tab = path.split('/values/').last;
+          return http.Response(jsonEncode({'values': tabs[tab] ?? []}), 200);
+        } else if (request.method == 'GET') {
+          return http.Response(
+            jsonEncode({
+              'sheets': [
+                {'properties': {'sheetId': 0, 'title': 'movimientos'}},
+                {'properties': {'sheetId': 1, 'title': 'categorias'}},
+                {'properties': {'sheetId': 2, 'title': 'info'}},
+              ],
+            }),
+            200,
+          );
+        }
+        return http.Response('{}', 200);
+      });
+      final sheets = SheetsBackupService(client: client);
+
+      await sheets.upload(
+        token: 't',
+        spreadsheetId: 's',
+        categories: categories,
+        transactions: transactions,
+      );
+      final snapshot = await sheets.download(token: 't', spreadsheetId: 's');
+
+      expect(tabs['movimientos']![1].sublist(2, 4), ['Gasto', 15000]);
+      expect(
+        snapshot.categories.map((c) => [c.id, c.name, c.iconKey, c.isDefault]),
+        categories.map((c) => [c.id, c.name, c.iconKey, c.isDefault]),
+      );
+      expect(
+        snapshot.transactions.map((t) => t.toMap()),
+        transactions.map((t) => t.toMap()),
+      );
     });
   });
 

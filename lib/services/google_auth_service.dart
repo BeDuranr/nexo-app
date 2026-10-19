@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:google_sign_in/google_sign_in.dart';
 
 /// Resultado de intentar conectar la cuenta de Google. Distingue el
@@ -33,6 +35,16 @@ class GoogleAuthService {
     'https://www.googleapis.com/auth/drive.file',
   ];
 
+  /// Cliente OAuth tipo "Web" del proyecto `nexo-512100`. Android lo
+  /// exige como `serverClientId`: el cliente Android de la consola no se
+  /// pasa en ningún lado, Google lo reconoce por el paquete y el SHA-1 del
+  /// keystore de release. No es un secreto.
+  ///
+  /// En iOS no se pasa: allá alcanza con el `GIDClientID` del Info.plist,
+  /// y el login ya está probado así.
+  static const String _webClientId =
+      '282041294667-tcn9rojjorbfnedqt0nr0qd9hmpmeuvt.apps.googleusercontent.com';
+
   final GoogleSignIn _signIn;
 
   GoogleSignInAccount? _account;
@@ -46,14 +58,19 @@ class GoogleAuthService {
   bool _missingConfiguration = false;
   bool get isMissingConfiguration => _missingConfiguration;
 
+  Future<void> _ensureInitialized() async {
+    if (_initialized) return;
+    await _signIn.initialize(
+      serverClientId: Platform.isAndroid ? _webClientId : null,
+    );
+    _initialized = true;
+  }
+
   /// Arranca el SDK y, si ya había una sesión, la recupera sin mostrar
   /// nada. Devuelve la cuenta recuperada, o null si hay que loguearse.
   Future<GoogleSignInAccount?> initializeAndRestore() async {
     try {
-      if (!_initialized) {
-        await _signIn.initialize();
-        _initialized = true;
-      }
+      await _ensureInitialized();
       // El tipo de retorno es un Future nullable: hay plataformas donde
       // la sesión llega por el stream de eventos y acá no hay nada que
       // esperar.
@@ -75,10 +92,7 @@ class GoogleAuthService {
   /// encadenar dos diálogos.
   Future<GoogleAuthResult> connect() async {
     try {
-      if (!_initialized) {
-        await _signIn.initialize();
-        _initialized = true;
-      }
+      await _ensureInitialized();
       if (!_signIn.supportsAuthenticate()) {
         return const GoogleAuthResult(
           GoogleAuthOutcome.notConfigured,

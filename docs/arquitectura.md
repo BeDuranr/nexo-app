@@ -88,14 +88,16 @@ adb install -r build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
 
 **Consecuencia:** si el usuario nunca conecta una cuenta de Google, perder el teléfono sigue siendo perder los movimientos.
 
-### Android: firma de release (pendiente, a propósito)
+### Android: firma de release
 
 `android/app/build.gradle.kts` lee `android/key.properties` **si existe**:
 
-- **Sin** ese archivo (estado actual): se sigue firmando con la clave de debug, igual que siempre. La app instalada se actualiza in-place sin problemas.
-- **Con** ese archivo: se firma con el keystore propio.
+- **Con** ese archivo (estado actual desde octubre de 2026): se firma con el keystore propio `nexo-release.jks`, alias `nexo`. SHA-1 `F2:FF:5C:20:CF:80:5D:23:CE:A3:06:EC:4C:99:E9:EB:4B:68:85:FB`: es el que está registrado en el cliente OAuth **Android** de Google Cloud, así que firmar con otra clave rompe el login de Google.
+- **Sin** ese archivo: se firma con la clave de debug de la máquina, como antes.
 
-La clave de debug es pública y conocida, así que a futuro conviene el keystore propio. Pero **cambiar la firma obliga a desinstalar la app en el Android del papá, y eso borra la base de datos** — y con `allowBackup="false"` ya no hay `adb restore` que valga. Hacer el corte solo cuando se acepte perder esos datos o exista una exportación manual.
+**El keystore y su contraseña tienen que estar respaldados fuera del equipo.** Si se pierden, no se puede volver a instalar una actualización encima de una app ya instalada.
+
+**El APK firmado con el keystore propio no se instala encima del que tiene el papá** (firmado con una clave de debug). Para pasarlo a esta firma hay que desinstalar, y eso borra la base de datos. Primero hay que rescatar sus datos.
 
 ```bash
 keytool -genkey -v -keystore ~/nexo-release.jks -keyalg RSA -keysize 2048 \

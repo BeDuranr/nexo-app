@@ -26,7 +26,7 @@ Nexo es una app simple, de un solo desarrollador, sin equipo detrás. La priorid
 - **Null safety real, no `!` como parche**: si un valor puede ser null, maneja el caso explícitamente (`if (value == null) return;` / `?.` / `??`) en vez de forzar con `!` para silenciar el analyzer.
 - **`ChangeNotifier` (providers) no deben tener lógica de UI** — mantener `category_provider.dart` y `transaction_provider.dart` enfocados en estado y llamadas a `DBHelper`; la lógica de presentación (formato, colores, textos) vive en los widgets o en `utils/`.
 - **Toda escritura a SQLite pasa por `DBHelper`** — no abrir conexiones ni ejecutar queries sueltas desde un widget o provider directamente.
-- **Cambios de schema van siempre por `_onUpgrade`**, nunca modificando `_onCreate` directamente (ver la nota ya existente en `CLAUDE.md` sobre esto — hay datos reales del padre del usuario en producción, no es un ambiente de pruebas).
+- **Cambios de schema van siempre por `_onUpgrade`**, nunca modificando `_onCreate` directamente (ver la nota ya existente en `AGENTS.md` sobre esto — hay datos reales del padre del usuario en producción, no es un ambiente de pruebas).
 - Usa `flutter_lints` (ya está como dev dependency) como piso mínimo — si el analyzer marca algo, no lo ignores con `// ignore:` sin una razón concreta.
 
 ## Al revisar código (propio o pedido por el usuario)

@@ -76,14 +76,18 @@ Hay que hacerlo una sola vez. El `.ipa` no sirve hasta que esto esté.
    `GoogleService-Info.plist`, y los clientes de iOS no tienen client
    secret.
 6. **Publicar en Producción.**
-7. Copiar los dos valores al `ios/Runner/Info.plist`, reemplazando los
-   `REEMPLAZAR`:
+7. Copiar los dos valores al `ios/Runner/Info.plist`:
    - `GIDClientID` → el client ID completo.
    - `CFBundleURLSchemes` → el "iOS URL scheme" que muestra la consola
      (el client ID dado vuelta, `com.googleusercontent.apps.…`).
 
-Mientras el plist siga diciendo `REEMPLAZAR`, Ajustes muestra "falta
-configurar el client ID" en vez de un error suelto.
+**Estado actual:** hecho. El proyecto es `nexo-512100` y el cliente de
+iOS ya está en el plist. Si alguna vez falta o queda mal, Ajustes muestra
+"falta configurar el client ID" en vez de un error suelto.
+
+El client ID **no es un secreto**: los clientes de OAuth para iOS no
+tienen client secret, y el valor viaja dentro del binario de la app de
+todos modos. Por eso está versionado sin problema.
 
 ### Por qué `drive.file` y no `spreadsheets`
 

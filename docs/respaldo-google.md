@@ -33,12 +33,19 @@ escribir). No es incremental a propósito: con este volumen de datos un
 dump entero no puede quedar desincronizado, y es mucho más fácil de
 razonar.
 
+Las tres hojas se reemplazan en **un solo `batchUpdate`**, que Google aplica entero o no aplica: se ajusta el tamaño de la grilla (así desaparecen las filas sobrantes) y se escriben las celdas. Antes cada hoja se borraba y se reescribía en llamadas separadas, y si iOS suspendía la app entre medio, la hoja de movimientos quedaba vacía hasta el siguiente respaldo. Ahora, si se corta, queda el respaldo anterior completo. El formato visual va en otro `batchUpdate`, después de los datos.
+
 ### Cuándo se respalda
 
 - Al apretar "Respaldar ahora" en Ajustes.
 - Al conectar la cuenta por primera vez.
 - Al mandar la app a segundo plano, **si hay cambios sin subir**.
-- Al abrir la app, **si hay cambios sin subir**.
+- Al volver a la app, **si hay cambios sin subir**. Es lo que reintenta un respaldo que no alcanzó a terminar al salir: en iPhone casi nunca se arranca la app de cero.
+- Al arrancar la app de cero, **si hay cambios sin subir**.
+
+No hay respaldo periódico mientras la app está abierta.
+
+En iOS el respaldo automático corre como tarea de segundo plano (`lib/services/background_task.dart` + `ios/Runner/AppDelegate.swift`): sin eso iOS suspende la app a los pocos segundos de salir, y con eso da unos 30.
 
 "Hay cambios sin subir" se calcula comparando dos marcas de tiempo de la
 tabla `settings`: `data_modificada` (que `DBHelper` actualiza en cada

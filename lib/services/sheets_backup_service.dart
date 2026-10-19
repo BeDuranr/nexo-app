@@ -194,73 +194,185 @@ class SheetsBackupService {
     return id;
   }
 
-  /// Sube el estado completo: borra lo que había y escribe todo de nuevo.
-  /// No es incremental a propósito — con el volumen de esta app un dump
-  /// entero es más simple de razonar y no puede quedar desincronizado.
+  /// Sube el estado completo, reemplazando todo lo que había. No es
+  /// incremental a propósito — con el volumen de esta app un dump entero
+  /// es más simple de razonar y no puede quedar desincronizado.
+  ///
+  /// Las tres hojas se reemplazan en **un solo** `batchUpdate`, que Google
+  /// aplica entero o no aplica. Antes cada hoja se borraba y se reescribía
+  /// en llamadas separadas: si iOS suspendía la app entre medio (al
+  /// salir, que es justo cuando corre el respaldo automático), la hoja de
+  /// movimientos quedaba vacía hasta el próximo respaldo.
   Future<void> upload({
     required String token,
     required String spreadsheetId,
     required List<CategoryModel> categories,
     required List<TransactionModel> transactions,
   }) async {
-    await _writeTab(token, spreadsheetId, _sheetCategories, [
-      _categoryHeader,
-      for (final category in categories)
-        [
-          category.id,
-          category.name,
-          category.iconKey,
-          category.isDefault ? 'Sí' : 'No',
+    final tabs = <String, List<List<Object?>>>{
+      _sheetCategories: [
+        _categoryHeader,
+        for (final category in categories)
+          [
+            category.id,
+            category.name,
+            category.iconKey,
+            category.isDefault ? 'Sí' : 'No',
+          ],
+      ],
+      _sheetTransactions: [
+        _transactionHeader,
+        for (final tx in transactions)
+          [
+            tx.id,
+            dateToSerial(tx.date),
+            tx.type == MovementType.income ? _incomeLabel : _expenseLabel,
+            tx.amount,
+            tx.categoryId,
+            tx.categoryName,
+            tx.categoryIconKey,
+            tx.note,
+          ],
+      ],
+      _sheetInfo: [
+        ['Dato', 'Valor'],
+        ['Última actualización', dateToSerial(DateTime.now())],
+        ['Movimientos', transactions.length],
+        ['Categorías', categories.length],
+        ['Formato', _formatVersion],
+      ],
+    };
+
+    final sheetIds = await _ensureTabs(token, spreadsheetId, tabs.keys);
+
+    await _post(
+      Uri.parse('$_sheetsApi/$spreadsheetId:batchUpdate'),
+      token,
+      {
+        'requests': [
+          for (final tab in tabs.entries)
+            ..._replaceTabRequests(sheetIds[tab.key]!, tab.value),
         ],
-    ]);
+      },
+    );
 
-    await _writeTab(token, spreadsheetId, _sheetTransactions, [
-      _transactionHeader,
-      for (final tx in transactions)
-        [
-          tx.id,
-          dateToSerial(tx.date),
-          tx.type == MovementType.income ? _incomeLabel : _expenseLabel,
-          tx.amount,
-          tx.categoryId,
-          tx.categoryName,
-          tx.categoryIconKey,
-          tx.note,
+    await _applyFormatting(token, spreadsheetId, sheetIds);
+  }
+
+  /// Id numérico de cada hoja, que es lo que piden los `batchUpdate`.
+  /// Si alguien borró una hoja a mano desde Drive, se vuelve a crear.
+  Future<Map<String, int>> _ensureTabs(
+    String token,
+    String spreadsheetId,
+    Iterable<String> titles,
+  ) async {
+    final body = await _get(
+      Uri.parse('$_sheetsApi/$spreadsheetId').replace(
+          queryParameters: {'fields': 'sheets.properties(sheetId,title)'}),
+      token,
+    );
+    final sheetIds = <String, int>{};
+    for (final sheet in (body?['sheets'] as List<dynamic>?) ?? const []) {
+      final props =
+          (sheet as Map<String, dynamic>)['properties'] as Map<String, dynamic>;
+      sheetIds[props['title'] as String] = props['sheetId'] as int;
+    }
+
+    final missing = titles.where((t) => !sheetIds.containsKey(t)).toList();
+    if (missing.isEmpty) return sheetIds;
+
+    final added = await _post(
+      Uri.parse('$_sheetsApi/$spreadsheetId:batchUpdate'),
+      token,
+      {
+        'requests': [
+          for (final title in missing)
+            {
+              'addSheet': {
+                'properties': {'title': title},
+              },
+            },
         ],
-    ]);
+      },
+    );
+    for (final reply in (added['replies'] as List<dynamic>?) ?? const []) {
+      final props = ((reply as Map<String, dynamic>)['addSheet']
+          as Map<String, dynamic>)['properties'] as Map<String, dynamic>;
+      sheetIds[props['title'] as String] = props['sheetId'] as int;
+    }
+    return sheetIds;
+  }
 
-    await _writeTab(token, spreadsheetId, _sheetInfo, [
-      ['Dato', 'Valor'],
-      ['Última actualización', dateToSerial(DateTime.now())],
-      ['Movimientos', transactions.length],
-      ['Categorías', categories.length],
-      ['Formato', _formatVersion],
-    ]);
+  /// Deja la hoja con exactamente [rows]: primero ajusta el tamaño de la
+  /// grilla y después escribe cada celda.
+  ///
+  /// Achicar la grilla es lo que borra las filas sobrantes cuando el
+  /// respaldo nuevo tiene menos movimientos que el anterior. Agrandarla es
+  /// lo que permite pasar las 1000 filas con las que viene una hoja nueva.
+  /// Sobra una fila vacía al final porque Sheets no deja fijar el
+  /// encabezado si es la única fila de la hoja.
+  List<Map<String, Object?>> _replaceTabRequests(
+    int sheetId,
+    List<List<Object?>> rows,
+  ) =>
+      [
+        {
+          'updateSheetProperties': {
+            'properties': {
+              'sheetId': sheetId,
+              'gridProperties': {
+                'rowCount': rows.length + 1,
+                'columnCount': rows.first.length,
+              },
+            },
+            'fields': 'gridProperties.rowCount,gridProperties.columnCount',
+          },
+        },
+        {
+          'updateCells': {
+            'start': {'sheetId': sheetId, 'rowIndex': 0, 'columnIndex': 0},
+            'rows': [
+              for (final row in rows)
+                {
+                  'values': [for (final cell in row) _cell(cell)],
+                },
+            ],
+            // Con esta máscara una celda sin valor se vacía, así que no
+            // queda texto viejo debajo de una nota que ahora está vacía.
+            'fields': 'userEnteredValue',
+          },
+        },
+      ];
 
-    await _applyFormatting(token, spreadsheetId);
+  /// Celda tal cual, sin interpretar: un texto que empiece con "=" queda
+  /// como texto, no como fórmula (lo mismo que hacía `RAW`).
+  Map<String, Object?> _cell(Object? value) {
+    if (value is num) {
+      return {
+        'userEnteredValue': {'numberValue': value},
+      };
+    }
+    final text = value?.toString() ?? '';
+    if (text.isEmpty) return const {};
+    return {
+      'userEnteredValue': {'stringValue': text},
+    };
   }
 
   /// Negrita y fila fija en los encabezados, y formato de fecha y monto.
   ///
   /// Se aplica en cada respaldo porque es idempotente y así también
-  /// alcanza a las planillas creadas antes de que existiera. Si falla no
-  /// se considera un respaldo fallido: los datos ya quedaron escritos, y
-  /// marcar el respaldo como pendiente por un tema visual haría reintentar
-  /// para siempre.
-  Future<void> _applyFormatting(String token, String spreadsheetId) async {
+  /// alcanza a las planillas creadas antes de que existiera. Va en un
+  /// `batchUpdate` aparte del de los datos, y si falla no se considera un
+  /// respaldo fallido: los datos ya quedaron escritos, y marcar el
+  /// respaldo como pendiente por un tema visual haría reintentar para
+  /// siempre.
+  Future<void> _applyFormatting(
+    String token,
+    String spreadsheetId,
+    Map<String, int> sheetIds,
+  ) async {
     try {
-      final body = await _get(
-        Uri.parse('$_sheetsApi/$spreadsheetId')
-            .replace(queryParameters: {'fields': 'sheets.properties'}),
-        token,
-      );
-      final sheetIds = <String, int>{};
-      for (final sheet in (body?['sheets'] as List<dynamic>?) ?? const []) {
-        final props =
-            (sheet as Map<String, dynamic>)['properties'] as Map<String, dynamic>;
-        sheetIds[props['title'] as String] = props['sheetId'] as int;
-      }
-
       final requests = <Map<String, Object?>>[
         {
           'updateSpreadsheetProperties': {
@@ -385,30 +497,6 @@ class SheetsBackupService {
       categories: parseCategories(categoryRows),
       transactions: parseTransactions(transactionRows),
     );
-  }
-
-  Future<void> _writeTab(
-    String token,
-    String spreadsheetId,
-    String tab,
-    List<List<Object?>> rows,
-  ) async {
-    // Limpiar antes de escribir: si el respaldo nuevo tiene menos filas
-    // que el anterior, sin esto quedarían movimientos fantasma al final.
-    await _post(
-      Uri.parse('$_sheetsApi/$spreadsheetId/values/$tab:clear'),
-      token,
-      const <String, Object?>{},
-    );
-
-    // `append` en vez de `update` porque agranda la grilla solo: una hoja
-    // nueva viene con 1000 filas, y un `update` directo falla al pasarlas.
-    final uri = Uri.parse('$_sheetsApi/$spreadsheetId/values/$tab!A1:append')
-        .replace(queryParameters: {
-      'valueInputOption': 'RAW',
-      'insertDataOption': 'INSERT_ROWS',
-    });
-    await _post(uri, token, {'values': rows});
   }
 
   Future<List<List<dynamic>>> _readTab(

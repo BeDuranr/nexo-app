@@ -53,7 +53,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Al salir de la app es el momento menos intrusivo para subir: no
     // interrumpe el registro de un movimiento ni compite con la UI.
-    if (state == AppLifecycleState.paused) {
+    //
+    // Al volver también, porque en iPhone casi nunca se arranca la app de
+    // cero (que es cuando corre `init`): si el respaldo al salir no
+    // alcanzó a terminar, sin esto quedaba pendiente hasta la próxima
+    // salida. Si no hay nada pendiente no hace ni una llamada a Google.
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.resumed) {
       context.read<BackupProvider>().backupIfPending();
     }
   }

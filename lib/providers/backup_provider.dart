@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../db/db_helper.dart';
+import '../services/background_task.dart';
 import '../services/google_auth_service.dart';
 import '../services/sheets_backup_service.dart';
 
@@ -26,6 +27,12 @@ class BackupProvider extends ChangeNotifier {
   DateTime? _lastBackup;
   DateTime? _dataChangedAt;
   bool _busy = false;
+
+  /// La sesión de Google ya se recuperó en [init]. Antes de eso el mail
+  /// guardado hace parecer conectada la cuenta, pero no hay token: un
+  /// respaldo lanzado por el aviso de "app activa" del arranque fallaría,
+  /// y por estar en curso haría saltear el de [init].
+  bool _sessionRestored = false;
   String? _errorMessage;
   String? _errorDetail;
 
@@ -67,6 +74,7 @@ class BackupProvider extends ChangeNotifier {
     await _db.setSetting(DBHelper.settingGoogleAccount, account.email);
     notifyListeners();
 
+    _sessionRestored = true;
     await backupIfPending();
   }
 
@@ -85,6 +93,7 @@ class BackupProvider extends ChangeNotifier {
       if (result.isConnected) {
         final email = result.account!.email;
         _accountEmail = email;
+        _sessionRestored = true;
         await _db.setSetting(DBHelper.settingGoogleAccount, email);
       } else if (result.outcome != GoogleAuthOutcome.canceled) {
         _errorMessage = 'No se pudo conectar la cuenta.';
@@ -153,17 +162,21 @@ class BackupProvider extends ChangeNotifier {
     }
   }
 
-  /// Respaldo automático: corre al mandar la app a segundo plano y al
-  /// arrancar, solo si hay algo nuevo y sin molestar con diálogos.
+  /// Respaldo automático: corre al arrancar la app, al mandarla a segundo
+  /// plano y al volver a ella, solo si hay algo nuevo y sin molestar con
+  /// diálogos.
+  ///
+  /// Corre como tarea de segundo plano de iOS, que si no suspende la app
+  /// a los pocos segundos de salir, a mitad de la subida.
   Future<void> backupIfPending() async {
-    if (!isConnected) return;
+    if (!isConnected || !_sessionRestored) return;
     // Se relee de SQLite y no se confía en lo que haya en memoria: los
     // movimientos se cargan en otra pestaña, que no le avisa a este
     // provider. Con el valor viejo, el respaldo al salir de la app se
     // salteaba justo los movimientos recién cargados.
     _dataChangedAt = await _db.getSettingAsDate(DBHelper.settingDataChangedAt);
     if (!hasPendingChanges) return;
-    await backupNow(interactive: false);
+    await runAsBackgroundTask(() => backupNow(interactive: false));
   }
 
   /// Trae el respaldo y **reemplaza** los datos locales.

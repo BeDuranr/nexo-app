@@ -215,32 +215,8 @@ void main() {
         ),
       ];
 
-      // Sheets falso: guarda lo que se escribe en cada hoja y lo devuelve
-      // al leer, como lo haría con `valueInputOption: RAW`.
-      final tabs = <String, List<dynamic>>{};
-      final client = MockClient((request) async {
-        final path = request.url.path;
-        if (path.endsWith(':append')) {
-          final tab = path.split('/values/').last.split('!').first;
-          tabs[tab] = (jsonDecode(request.body) as Map)['values'] as List;
-        } else if (request.method == 'GET' && path.contains('/values/')) {
-          final tab = path.split('/values/').last;
-          return http.Response(jsonEncode({'values': tabs[tab] ?? []}), 200);
-        } else if (request.method == 'GET') {
-          return http.Response(
-            jsonEncode({
-              'sheets': [
-                {'properties': {'sheetId': 0, 'title': 'movimientos'}},
-                {'properties': {'sheetId': 1, 'title': 'categorias'}},
-                {'properties': {'sheetId': 2, 'title': 'info'}},
-              ],
-            }),
-            200,
-          );
-        }
-        return http.Response('{}', 200);
-      });
-      final sheets = SheetsBackupService(client: client);
+      final fake = _FakeSheets();
+      final sheets = SheetsBackupService(client: fake.client);
 
       await sheets.upload(
         token: 't',
@@ -250,7 +226,7 @@ void main() {
       );
       final snapshot = await sheets.download(token: 't', spreadsheetId: 's');
 
-      expect(tabs['movimientos']![1].sublist(2, 4), ['Gasto', 15000]);
+      expect(fake.tabs['movimientos']![1].sublist(2, 4), ['Gasto', 15000]);
       expect(
         snapshot.categories.map((c) => [c.id, c.name, c.iconKey, c.isDefault]),
         categories.map((c) => [c.id, c.name, c.iconKey, c.isDefault]),
@@ -259,6 +235,77 @@ void main() {
         snapshot.transactions.map((t) => t.toMap()),
         transactions.map((t) => t.toMap()),
       );
+    });
+  });
+
+  group('subida', () {
+    TransactionModel tx(int id) => TransactionModel(
+          id: id,
+          amount: 1000,
+          type: MovementType.expense,
+          categoryId: 1,
+          categoryName: 'Comida',
+          categoryIconKey: 'food',
+          note: '',
+          date: DateTime(2026, 10, 19),
+        );
+
+    test('reemplaza las tres hojas en un solo batchUpdate, sin borrar antes', () async {
+      // Si iOS suspende la app entre dos llamadas, ninguna hoja puede
+      // quedar a medio escribir: los datos van todos en una sola, que
+      // Google aplica entera o no aplica.
+      final fake = _FakeSheets();
+      await SheetsBackupService(client: fake.client).upload(
+        token: 't',
+        spreadsheetId: 's',
+        categories: const [CategoryModel(id: 1, name: 'Comida', iconKey: 'food')],
+        transactions: [tx(1), tx(2)],
+      );
+
+      expect(fake.requests.where((r) => r.url.path.endsWith(':clear')), isEmpty);
+      final dataBatches = fake.batches.where((b) => b.any((r) => r.containsKey('updateCells')));
+      expect(dataBatches.length, 1);
+      expect(dataBatches.single.where((r) => r.containsKey('updateCells')).length, 3);
+    });
+
+    test('achica la grilla para no dejar filas viejas al final', () async {
+      // Con menos movimientos que en el respaldo anterior, las filas
+      // sobrantes se eliminan junto con la grilla en la misma operación.
+      final fake = _FakeSheets();
+      await SheetsBackupService(client: fake.client).upload(
+        token: 't',
+        spreadsheetId: 's',
+        categories: const [],
+        transactions: [tx(1)],
+      );
+
+      // Encabezado + 1 movimiento + la fila de margen.
+      expect(fake.rowCounts['movimientos'], 3);
+      expect(fake.columnCounts['movimientos'], 8);
+    });
+
+    test('vuelve a crear una hoja que se borró a mano', () async {
+      final fake = _FakeSheets(titles: ['movimientos', 'info']);
+      await SheetsBackupService(client: fake.client).upload(
+        token: 't',
+        spreadsheetId: 's',
+        categories: const [CategoryModel(id: 1, name: 'Comida', iconKey: 'food')],
+        transactions: [tx(1)],
+      );
+
+      expect(fake.tabs['categorias']![1], [1, 'Comida', 'food', 'No']);
+    });
+
+    test('un error al dar formato no hace fallar el respaldo', () async {
+      final fake = _FakeSheets(failFormatting: true);
+      await SheetsBackupService(client: fake.client).upload(
+        token: 't',
+        spreadsheetId: 's',
+        categories: const [],
+        transactions: [tx(1)],
+      );
+
+      expect(fake.tabs['movimientos']!.length, 2);
     });
   });
 
@@ -296,4 +343,105 @@ void main() {
       expect(service.parseCategories(rows), isEmpty);
     });
   });
+}
+
+/// Sheets falso que entiende lo justo de la API: el `batchUpdate` con
+/// que sube la app y el `values` con que lee al restaurar. Las celdas
+/// vuelven como las devolvería `UNFORMATTED_VALUE`, con los vacíos del
+/// final de cada fila recortados.
+class _FakeSheets {
+  _FakeSheets({
+    List<String> titles = const ['movimientos', 'categorias', 'info'],
+    this.failFormatting = false,
+  }) {
+    for (final title in titles) {
+      _titles[_nextId++] = title;
+    }
+  }
+
+  final bool failFormatting;
+  final _titles = <int, String>{};
+  var _nextId = 0;
+
+  final tabs = <String, List<List<dynamic>>>{};
+  final rowCounts = <String, int>{};
+  final columnCounts = <String, int>{};
+  final requests = <http.Request>[];
+  final batches = <List<Map<String, dynamic>>>[];
+
+  late final client = MockClient((request) async {
+    requests.add(request);
+    final path = request.url.path;
+
+    if (request.method == 'GET' && path.contains('/values/')) {
+      final tab = path.split('/values/').last;
+      return http.Response(jsonEncode({'values': tabs[tab] ?? []}), 200);
+    }
+    if (request.method == 'GET') {
+      return http.Response(
+        jsonEncode({
+          'sheets': [
+            for (final e in _titles.entries)
+              {
+                'properties': {'sheetId': e.key, 'title': e.value},
+              },
+          ],
+        }),
+        200,
+      );
+    }
+    if (path.endsWith(':batchUpdate')) {
+      final batch = ((jsonDecode(request.body) as Map)['requests'] as List)
+          .cast<Map<String, dynamic>>();
+      batches.add(batch);
+      if (failFormatting && batch.any((r) => r.containsKey('repeatCell'))) {
+        return http.Response('{"error": {"message": "formato inválido"}}', 400);
+      }
+      return http.Response(jsonEncode({'replies': batch.map(_apply).toList()}), 200);
+    }
+    return http.Response('{}', 200);
+  });
+
+  Map<String, dynamic> _apply(Map<String, dynamic> request) {
+    final add = request['addSheet'];
+    if (add != null) {
+      final id = _nextId++;
+      final title = add['properties']['title'] as String;
+      _titles[id] = title;
+      return {
+        'addSheet': {
+          'properties': {'sheetId': id, 'title': title},
+        },
+      };
+    }
+
+    final props = request['updateSheetProperties']?['properties'];
+    final grid = props?['gridProperties'];
+    if (grid != null && grid['rowCount'] != null) {
+      final title = _titles[props['sheetId']]!;
+      rowCounts[title] = grid['rowCount'] as int;
+      columnCounts[title] = grid['columnCount'] as int;
+    }
+
+    final update = request['updateCells'];
+    if (update != null) {
+      final title = _titles[update['start']['sheetId']]!;
+      tabs[title] = [
+        for (final row in update['rows'] as List)
+          _trimTrailing([
+            for (final cell in row['values'] as List)
+              (cell['userEnteredValue'] as Map?)?.values.single,
+          ]),
+      ];
+    }
+    return {};
+  }
+
+  List<dynamic> _trimTrailing(List<dynamic> row) {
+    var end = row.length;
+    while (end > 0 && row[end - 1] == null) {
+      end--;
+    }
+    return row.sublist(0, end);
+  }
 }

@@ -5,11 +5,11 @@
 - **State management**: `provider` (`^6.1.2`)
 - **Local storage**: `sqflite` (SQLite) vía `lib/db/db_helper.dart` — singleton `DBHelper` que centraliza todas las queries.
 - **Charts**: ninguno — las barras de Métricas son `LinearProgressIndicator` (`fl_chart` se sacó, no se usaba).
-- **Fonts**: Space Grotesk (display/headings) + Plus Jakarta Sans (body), **empaquetadas** en `assets/fonts/`. Se sigue usando la API de `google_fonts`, pero con `GoogleFonts.config.allowRuntimeFetching = false` en `main()`: el paquete toma los `.ttf` del bundle y nunca sale a la red. Es obligatorio — el release de Android no declara el permiso `INTERNET`, así que la descarga en runtime fallaba y la tipografía caía al tipo del sistema. Los archivos deben llamarse `{Familia}-{Peso}.ttf` (ej. `SpaceGrotesk-Bold.ttf`); si falta un peso, `google_fonts` lo registra en consola y usa el fallback.
+- **Fonts**: Space Grotesk (display/headings) + Plus Jakarta Sans (body), **empaquetadas** en `assets/fonts/`. Se sigue usando la API de `google_fonts`, pero con `GoogleFonts.config.allowRuntimeFetching = false` en `main()`: el paquete toma los `.ttf` del bundle y nunca sale a la red. Era obligatorio cuando el release de Android no declaraba el permiso `INTERNET`: la descarga en runtime fallaba y la tipografía caía al tipo del sistema. Hoy el permiso está (lo necesita el respaldo), pero se mantiene así para que la app no salga a la red por las fuentes. Los archivos deben llamarse `{Familia}-{Peso}.ttf` (ej. `SpaceGrotesk-Bold.ttf`); si falta un peso, `google_fonts` lo registra en consola y usa el fallback.
 - **Formatting**: `intl` (fechas, separador de miles)
 - **Cuenta y respaldo**: `google_sign_in` + llamadas REST a Sheets y Drive con `http` — ver `docs/respaldo-google.md`.
 
-Sin backend propio y sin PIN. SQLite en el dispositivo sigue siendo la **única fuente de verdad**: la app funciona completa sin conectar ninguna cuenta. Lo único que sale a la red es el respaldo opcional en Google Sheets, que el usuario activa desde Ajustes. Usuario único (el padre del desarrollador es el primer tester real).
+Sin backend propio y sin PIN. SQLite en el dispositivo sigue siendo la **única fuente de verdad**: la app funciona completa sin conectar ninguna cuenta. Lo único que sale a la red es el respaldo opcional en Google Sheets, que el usuario activa desde Ajustes. Cada instalación tiene un solo usuario. Hay tres: el iPhone del desarrollador y los Android de su papá (con datos reales) y de su cuñado. Ver la tabla en `AGENTS.md`.
 
 ## Estructura (`lib/`)
 
@@ -17,7 +17,7 @@ Sin backend propio y sin PIN. SQLite en el dispositivo sigue siendo la **única 
 - `db/db_helper.dart` — todo el acceso a SQLite (CRUD de categorías y transacciones, migraciones de schema, tabla `settings`).
 - `models/` — `category_model.dart`, `transaction_model.dart`.
 - `providers/` — `category_provider.dart`, `transaction_provider.dart`, `backup_provider.dart` (`ChangeNotifier`, consumidos vía `provider`).
-- `services/` — `google_auth_service.dart` y `sheets_backup_service.dart`: lo único del proyecto que habla con la red.
+- `services/` — `google_auth_service.dart` y `sheets_backup_service.dart`: lo único del proyecto que habla con la red. `background_task.dart` le pide a iOS tiempo extra en segundo plano para el respaldo automático (la otra mitad está en `ios/Runner/AppDelegate.swift`).
 - `screens/` — `home_screen.dart` (contenedor de tabs), `quick_entry_screen.dart`, `history_screen.dart`, `edit_transaction_screen.dart`, `metrics_screen.dart`, `settings_screen.dart`.
 - `widgets/movement_form.dart` — **formulario de movimiento compartido** por registro y edición (monto, toggle gasto/ingreso, categorías, nota, fecha, barra "Listo"). Antes esas ~250 líneas estaban duplicadas en las dos pantallas. Guarda la categoría como **id** y la resuelve contra `CategoryProvider` en cada build: por eso nunca se guarda un nombre desactualizado, y si la categoría fue eliminada obliga a elegir una en vez de reasignar en silencio.
 - `theme/app_theme.dart` — todo el sistema de diseño (ver `docs/diseno-ux.md`).

@@ -184,6 +184,14 @@ class DebtStatus {
 
   bool get isFinished => next == null;
 
+  /// Cuotas que vencen después de [day]: las que cubre un pago anticipado
+  /// hecho ese día. Una cuota que vence el mismo día no entra, porque se
+  /// paga como siempre y el pago cubre de ahí en adelante.
+  List<TransactionModel> installmentsAfter(DateTime day) {
+    final endOfDay = DateTime(day.year, day.month, day.day, 23, 59, 59, 999);
+    return installments.where((t) => t.date.isAfter(endOfDay)).toList();
+  }
+
   factory DebtStatus.of(
     DebtModel debt,
     Iterable<TransactionModel> transactions, {

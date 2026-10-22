@@ -56,6 +56,17 @@ class DebtProvider extends ChangeNotifier {
     return _write(() => _db.updateDebt(debt, category, now: DateTime.now()));
   }
 
+  /// Pago anticipado de lo que queda (ver `DBHelper.payOffDebt`). Quien
+  /// llame debe recargar `TransactionProvider`.
+  Future<bool> payOffDebt(DebtModel debt,
+      {required double amount, required DateTime date}) async {
+    var paid = false;
+    final ok = await _write(() async {
+      paid = await _db.payOffDebt(debt.id!, amount: amount, date: date);
+    });
+    return ok && paid;
+  }
+
   /// Borra la deuda y sus cuotas futuras (ver `DBHelper.deleteDebt`).
   /// Quien llame debe recargar `TransactionProvider`.
   Future<bool> deleteDebt(DebtModel debt) {

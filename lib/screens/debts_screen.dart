@@ -8,6 +8,7 @@ import '../providers/debt_provider.dart';
 import '../providers/transaction_provider.dart';
 import '../theme/app_theme.dart';
 import '../utils/category_icons.dart';
+import '../widgets/thousands_input_formatter.dart';
 import 'debt_form_screen.dart';
 
 String _money(double amount) =>
@@ -320,6 +321,39 @@ class _DebtDetailSheet extends StatelessWidget {
 
   const _DebtDetailSheet({required this.status});
 
+  Future<void> _payOff(BuildContext context) async {
+    final result = await showDialog<_PayOff>(
+      context: context,
+      builder: (_) => _PayOffDialog(status: status),
+    );
+    if (result == null || !context.mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    final transactions = context.read<TransactionProvider>();
+    final ok = await context
+        .read<DebtProvider>()
+        .payOffDebt(status.debt, amount: result.amount, date: result.date);
+    if (!ok) {
+      messenger.showSnackBar(
+        const SnackBar(
+          backgroundColor: AppColors.expense,
+          content: Text('No se pudo registrar el pago. Intenta de nuevo.',
+              style: TextStyle(color: Colors.white)),
+        ),
+      );
+      return;
+    }
+    // Las cuotas cubiertas se borraron y el pago se insertó: sin recargar,
+    // el Historial y el saldo seguirían mostrando las cuotas viejas.
+    await transactions.load();
+    HapticFeedback.mediumImpact();
+    navigator.pop();
+    messenger.showSnackBar(
+      SnackBar(content: Text('"${status.debt.name}" quedó pagada')),
+    );
+  }
+
   Future<void> _delete(BuildContext context) async {
     final pending = status.installments.length - status.paidCount;
     final confirmed = await showDialog<bool>(
@@ -450,7 +484,21 @@ class _DebtDetailSheet extends StatelessWidget {
                 'edítala en el Historial como cualquier movimiento.',
                 style: TextStyle(fontSize: 10, color: AppColors.urban500),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 8),
+              if (!status.isFinished)
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () => _payOff(context),
+                    icon: const Icon(Icons.done_all, size: 16),
+                    label: const Text('Pagar lo que queda'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.urbanBlue,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -478,6 +526,159 @@ class _DebtDetailSheet extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Lo que se confirma en el diálogo de pago anticipado.
+class _PayOff {
+  final double amount;
+  final DateTime date;
+
+  const _PayOff(this.amount, this.date);
+}
+
+/// Pago anticipado: cuánto se pagó y qué día. El monto parte en el saldo
+/// de las cuotas que cubre, pero se puede bajar si el banco descontó
+/// intereses.
+class _PayOffDialog extends StatefulWidget {
+  final DebtStatus status;
+
+  const _PayOffDialog({required this.status});
+
+  @override
+  State<_PayOffDialog> createState() => _PayOffDialogState();
+}
+
+class _PayOffDialogState extends State<_PayOffDialog> {
+  final _amountController = TextEditingController();
+  late DateTime _date;
+
+  // Si el usuario no tocó el monto, sigue al saldo cuando cambia la
+  // fecha; si lo cambió (un descuento), no se le pisa.
+  bool _amountEdited = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _date = DateTime.now();
+    _amountController.text = formatAmountForInput(_coveredAmount());
+  }
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  double _coveredAmount() => widget.status
+      .installmentsAfter(_date)
+      .fold<double>(0, (sum, t) => sum + t.amount);
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime(now.year - 5),
+      // Es un pago que ya se hizo: una fecha futura sería una cuota más.
+      lastDate: now,
+      locale: const Locale('es', 'CL'),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: Theme.of(context).colorScheme.copyWith(
+                  primary: AppColors.urbanBlue,
+                  onPrimary: Colors.white,
+                  surface: AppColors.urban900,
+                  onSurface: Colors.white,
+                ),
+            dialogTheme: const DialogThemeData(backgroundColor: AppColors.urban900),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _date = picked;
+      if (!_amountEdited) {
+        _amountController.text = formatAmountForInput(_coveredAmount());
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final covered = widget.status.installmentsAfter(_date);
+    final amount = parseFormattedAmount(_amountController.text);
+    final canConfirm = covered.isNotEmpty && amount > 0;
+
+    return AlertDialog(
+      title: Text('Pagar lo que queda', style: AppTheme.display(size: 17)),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('MONTO PAGADO',
+              style: TextStyle(
+                  fontSize: 10, color: AppColors.urban300, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _amountController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: false),
+            inputFormatters: const [ThousandsInputFormatter()],
+            style: AppTheme.display(size: 20),
+            decoration: const InputDecoration(
+              prefixText: '\$ ',
+              isDense: true,
+              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            ),
+            onChanged: (_) => setState(() => _amountEdited = true),
+          ),
+          const SizedBox(height: 12),
+          const Text('FECHA DEL PAGO',
+              style: TextStyle(
+                  fontSize: 10, color: AppColors.urban300, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 6),
+          InkWell(
+            onTap: _pickDate,
+            borderRadius: BorderRadius.circular(6),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(DateFormat("d 'de' MMMM yyyy", 'es_CL').format(_date),
+                    style: const TextStyle(fontSize: 13, color: Colors.white)),
+                const SizedBox(width: 6),
+                const Icon(Icons.edit_calendar_outlined,
+                    size: 14, color: AppColors.urbanBlue),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            covered.isEmpty
+                ? 'No quedan cuotas después de esa fecha.'
+                : 'Reemplaza ${covered.length == 1 ? 'la cuota que faltaba' : 'las ${covered.length} cuotas que faltaban'} '
+                    '(${_money(covered.fold<double>(0, (s, t) => s + t.amount))}) '
+                    'por un solo gasto en esa fecha. Las que ya pasaron no se tocan.',
+            style: TextStyle(
+                fontSize: 11,
+                color: covered.isEmpty ? AppColors.expense : AppColors.urban300),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancelar', style: TextStyle(color: AppColors.urban300)),
+        ),
+        TextButton(
+          onPressed:
+              canConfirm ? () => Navigator.pop(context, _PayOff(amount, _date)) : null,
+          child: const Text('Registrar pago'),
+        ),
+      ],
     );
   }
 }

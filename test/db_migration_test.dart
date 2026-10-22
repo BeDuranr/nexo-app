@@ -372,6 +372,81 @@ void main() {
     });
   });
 
+  group('pago anticipado', () {
+    // 18 cuotas de $100.000 desde el 30 de noviembre de 2026.
+    final loan = DebtModel(
+      name: 'Crédito auto',
+      totalAmount: 1800000,
+      installments: 18,
+      firstDate: DateTime(2026, 11, 30),
+    );
+
+    Future<List<TransactionModel>> installmentsOf(Database db, int debtId) async =>
+        (await db.query('transactions',
+                where: 'debt_id = ?', whereArgs: [debtId], orderBy: 'date ASC'))
+            .map(TransactionModel.fromMap)
+            .toList();
+
+    test('en el mes 12 reemplaza de la 12 a la 18 por un solo pago', () async {
+      final db = await _openLegacyV1(factory);
+      await migrate(db, 1);
+      final debtId = await helper.insertDebtWith(db, loan, _category);
+
+      // Pagó el 15 de octubre de 2027, antes de que venza la cuota 12
+      // (30 de octubre), con descuento: $650.000 en vez de $700.000.
+      final ok = await helper.payOffDebtWith(db, debtId,
+          amount: 650000, date: DateTime(2027, 10, 15));
+
+      expect(ok, isTrue);
+      final after = await installmentsOf(db, debtId);
+      expect(after.length, 12);
+      expect(after[10].note, 'Crédito auto · cuota 11/18');
+      expect(after.last.note, 'Crédito auto · pago anticipado');
+      expect(after.last.amount, 650000);
+      expect(after.last.date, DateTime(2027, 10, 15, 12));
+
+      final debt = DebtModel.fromMap((await db.query('debts')).single);
+      expect(debt.installments, 12);
+      expect(debt.totalAmount, 1100000 + 650000);
+      final status = DebtStatus.of(debt, after, now: DateTime(2027, 10, 15, 18));
+      expect(status.isFinished, isTrue);
+      expect(status.paidAmount, debt.totalAmount);
+
+      await db.close();
+    });
+
+    test('el día que vence una cuota, esa se paga como siempre', () async {
+      final db = await _openLegacyV1(factory);
+      await migrate(db, 1);
+      final debtId = await helper.insertDebtWith(db, loan, _category);
+
+      await helper.payOffDebtWith(db, debtId,
+          amount: 600000, date: DateTime(2027, 10, 30));
+
+      final after = await installmentsOf(db, debtId);
+      expect(after.length, 13);
+      expect(after[11].note, 'Crédito auto · cuota 12/18');
+      expect(after.last.amount, 600000);
+
+      await db.close();
+    });
+
+    test('sin cuotas después de la fecha no toca nada', () async {
+      final db = await _openLegacyV1(factory);
+      await migrate(db, 1);
+      final debtId = await helper.insertDebtWith(db, loan, _category);
+
+      final ok = await helper.payOffDebtWith(db, debtId,
+          amount: 1000, date: DateTime(2028, 5, 1));
+
+      expect(ok, isFalse);
+      expect((await installmentsOf(db, debtId)).length, 18);
+      expect(DebtModel.fromMap((await db.query('debts')).single).totalAmount, 1800000);
+
+      await db.close();
+    });
+  });
+
   group('updateCategory', () {
     test('propaga nombre e ícono a los movimientos de esa categoría', () async {
       // DBHelper resuelve su propia ruta de base, así que para probar la

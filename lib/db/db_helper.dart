@@ -504,6 +504,66 @@ class DBHelper {
     await _touch(txn);
   }
 
+  /// Pago anticipado: borra las cuotas que vencen después de [date] y
+  /// registra en su lugar un solo gasto por [amount], que puede ser menor
+  /// al saldo si el banco descontó intereses. La deuda queda con el total
+  /// y la cantidad de cuotas reales, así que termina y cuadra.
+  ///
+  /// Devuelve false (sin tocar nada) si no hay cuotas después de esa fecha.
+  Future<bool> payOffDebt(int debtId,
+      {required double amount, required DateTime date}) async {
+    final db = await database;
+    return db.transaction(
+        (txn) => payOffDebtWith(txn, debtId, amount: amount, date: date));
+  }
+
+  /// Cuerpo de [payOffDebt], expuesto para los tests.
+  Future<bool> payOffDebtWith(DatabaseExecutor txn, int debtId,
+      {required double amount, required DateTime date}) async {
+    final rows = await txn.query('debts', where: 'id = ?', whereArgs: [debtId]);
+    if (rows.isEmpty) return false;
+    final debt = DebtModel.fromMap(rows.first);
+
+    final endOfDay = DateTime(date.year, date.month, date.day, 23, 59, 59, 999);
+    final installments = (await txn.query('transactions',
+            where: 'debt_id = ?', whereArgs: [debtId], orderBy: 'date ASC, id ASC'))
+        .map(TransactionModel.fromMap)
+        .toList();
+    final covered = installments.where((t) => t.date.isAfter(endOfDay)).toList();
+    if (covered.isEmpty) return false;
+    final kept = installments.where((t) => !t.date.isAfter(endOfDay)).toList();
+
+    for (final t in covered) {
+      await txn.delete('transactions', where: 'id = ?', whereArgs: [t.id]);
+    }
+    // La categoría es la de la primera cuota cubierta: si la deuda se
+    // editó, esa es la vigente.
+    final reference = covered.first;
+    await txn.insert('transactions', {
+      'amount': amount,
+      'type': movementTypeToString(MovementType.expense),
+      'category_id': reference.categoryId,
+      'category_name': reference.categoryName,
+      'category_icon_key': reference.categoryIconKey,
+      'note': '${debt.name} · pago anticipado',
+      // A mediodía, igual que las cuotas (ver `DebtModel.dueDates`).
+      'date': DateTime(date.year, date.month, date.day, 12).toIso8601String(),
+      'debt_id': debtId,
+    });
+
+    await txn.update(
+      'debts',
+      {
+        'total_amount': kept.fold<double>(0, (sum, t) => sum + t.amount) + amount,
+        'installments': kept.length + 1,
+      },
+      where: 'id = ?',
+      whereArgs: [debtId],
+    );
+    await _touch(txn);
+    return true;
+  }
+
   /// Elimina la deuda y sus cuotas **futuras**. Las que ya pasaron se
   /// quedan en el Historial como gastos sueltos: esa plata ya se gastó, y
   /// borrarlas cambiaría los saldos de meses cerrados.

@@ -50,6 +50,12 @@ class DebtProvider extends ChangeNotifier {
     return _write(() => _db.insertDebt(debt, category));
   }
 
+  /// Guarda los cambios y rehace las cuotas pendientes si hace falta (ver
+  /// `DBHelper.updateDebt`). Quien llame debe recargar `TransactionProvider`.
+  Future<bool> updateDebt(DebtModel debt, CategoryModel category) {
+    return _write(() => _db.updateDebt(debt, category, now: DateTime.now()));
+  }
+
   /// Borra la deuda y sus cuotas futuras (ver `DBHelper.deleteDebt`).
   /// Quien llame debe recargar `TransactionProvider`.
   Future<bool> deleteDebt(DebtModel debt) {

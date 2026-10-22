@@ -8,7 +8,7 @@ import '../providers/debt_provider.dart';
 import '../providers/transaction_provider.dart';
 import '../theme/app_theme.dart';
 import '../utils/category_icons.dart';
-import 'new_debt_screen.dart';
+import 'debt_form_screen.dart';
 
 String _money(double amount) =>
     '\$${NumberFormat.decimalPattern('es_CL').format(amount.round())}';
@@ -18,31 +18,34 @@ String _money(double amount) =>
 /// Las cuotas ya están registradas como gastos con fecha futura, así que
 /// esta pantalla solo agrupa y resume. Una cuota se edita o se borra en
 /// el Historial, como cualquier otro movimiento.
+/// Abre el formulario para crear una deuda, o para editar [editing].
+void _openDebtForm(BuildContext context, {DebtStatus? editing}) {
+  Navigator.of(context).push(
+    PageRouteBuilder(
+      transitionDuration: const Duration(milliseconds: 280),
+      reverseTransitionDuration: const Duration(milliseconds: 220),
+      pageBuilder: (_, animation, __) => DebtFormScreen(editing: editing),
+      transitionsBuilder: (_, animation, __, child) {
+        final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+        return FadeTransition(
+          opacity: curved,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 0.06),
+              end: Offset.zero,
+            ).animate(curved),
+            child: child,
+          ),
+        );
+      },
+    ),
+  );
+}
+
 class DebtsScreen extends StatelessWidget {
   const DebtsScreen({super.key});
 
-  void _openNewDebt(BuildContext context) {
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        transitionDuration: const Duration(milliseconds: 280),
-        reverseTransitionDuration: const Duration(milliseconds: 220),
-        pageBuilder: (_, animation, __) => const NewDebtScreen(),
-        transitionsBuilder: (_, animation, __, child) {
-          final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
-          return FadeTransition(
-            opacity: curved,
-            child: SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(0, 0.06),
-                end: Offset.zero,
-              ).animate(curved),
-              child: child,
-            ),
-          );
-        },
-      ),
-    );
-  }
+  void _openNewDebt(BuildContext context) => _openDebtForm(context);
 
   @override
   Widget build(BuildContext context) {
@@ -448,14 +451,28 @@ class _DebtDetailSheet extends StatelessWidget {
                 style: TextStyle(fontSize: 10, color: AppColors.urban500),
               ),
               const SizedBox(height: 4),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: () => _delete(context),
-                  icon: const Icon(Icons.delete_outline, size: 16, color: AppColors.expense),
-                  label: const Text('Eliminar deuda',
-                      style: TextStyle(color: AppColors.expense)),
-                ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  TextButton.icon(
+                    onPressed: () => _delete(context),
+                    icon:
+                        const Icon(Icons.delete_outline, size: 16, color: AppColors.expense),
+                    label: const Text('Eliminar deuda',
+                        style: TextStyle(color: AppColors.expense)),
+                  ),
+                  FilledButton.tonalIcon(
+                    onPressed: () {
+                      // Se cierra el detalle antes de abrir el formulario:
+                      // al volver, sus datos ya no serían los de la deuda.
+                      final navigator = Navigator.of(context);
+                      navigator.pop();
+                      _openDebtForm(navigator.context, editing: status);
+                    },
+                    icon: const Icon(Icons.edit_outlined, size: 16),
+                    label: const Text('Editar'),
+                  ),
+                ],
               ),
             ],
           ),

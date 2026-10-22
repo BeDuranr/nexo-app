@@ -283,6 +283,95 @@ void main() {
     });
   });
 
+  group('editar una deuda', () {
+    const otherCategory = CategoryModel(id: 2, name: 'Café', iconKey: 'coffee');
+    // Pasaron noviembre, diciembre y enero: 3 cuotas pagadas, 9 pendientes.
+    final now = DateTime(2027, 1, 30, 8);
+
+    Future<List<TransactionModel>> installmentsOf(Database db, int debtId) async =>
+        (await db.query('transactions',
+                where: 'debt_id = ?', whereArgs: [debtId], orderBy: 'date ASC'))
+            .map(TransactionModel.fromMap)
+            .toList();
+
+    DebtModel edited(int id,
+            {String name = 'Crédito auto',
+            double total = 3000000,
+            int installments = 12}) =>
+        DebtModel(
+          id: id,
+          name: name,
+          totalAmount: total,
+          installments: installments,
+          firstDate: DateTime(2026, 11, 30),
+        );
+
+    test('cambiar solo nombre y categoría no toca montos ni fechas', () async {
+      final db = await _openLegacyV1(factory);
+      await migrate(db, 1);
+      final debtId = await helper.insertDebtWith(db, _carLoan, _category);
+
+      // Una cuota futura editada a mano (vino con interés) se respeta.
+      final march = (await installmentsOf(db, debtId))[4];
+      await db.update('transactions', {'amount': 260000.0},
+          where: 'id = ?', whereArgs: [march.id]);
+      final before = await installmentsOf(db, debtId);
+
+      await helper.updateDebtWith(db, edited(debtId, name: 'Auto'), otherCategory, now: now);
+
+      final after = await installmentsOf(db, debtId);
+      expect(after.map((t) => [t.id, t.amount, t.date]),
+          before.map((t) => [t.id, t.amount, t.date]));
+      expect(after.every((t) => t.categoryName == 'Café'), isTrue);
+      expect(after.first.note, 'Auto · cuota 1/12');
+      expect(after.last.note, 'Auto · cuota 12/12');
+      expect((await db.query('debts')).single['name'], 'Auto');
+
+      await db.close();
+    });
+
+    test('cambiar el total rehace solo las pendientes y la suma da el total',
+        () async {
+      final db = await _openLegacyV1(factory);
+      await migrate(db, 1);
+      final debtId = await helper.insertDebtWith(db, _carLoan, _category);
+      final pastBefore = (await installmentsOf(db, debtId)).take(3).toList();
+
+      await helper.updateDebtWith(
+          db, edited(debtId, total: 3900000, installments: 12), _category, now: now);
+
+      final after = await installmentsOf(db, debtId);
+      expect(after.length, 12);
+      // Las tres pasadas son exactamente las mismas filas.
+      expect(after.take(3).map((t) => [t.id, t.amount]),
+          pastBefore.map((t) => [t.id, t.amount]));
+      // Faltaban 3.900.000 - 750.000 = 3.150.000 en 9 cuotas.
+      expect(after.skip(3).every((t) => t.amount == 350000), isTrue);
+      expect(after.fold<double>(0, (s, t) => s + t.amount), 3900000);
+      expect(after[3].date, DateTime(2027, 2, 28, 12));
+      expect(after[3].note, 'Crédito auto · cuota 4/12');
+
+      await db.close();
+    });
+
+    test('alargar el plazo agrega cuotas al final', () async {
+      final db = await _openLegacyV1(factory);
+      await migrate(db, 1);
+      final debtId = await helper.insertDebtWith(db, _carLoan, _category);
+
+      await helper.updateDebtWith(db, edited(debtId, installments: 18), _category, now: now);
+
+      final after = await installmentsOf(db, debtId);
+      expect(after.length, 18);
+      expect(after.last.date, DateTime(2028, 4, 30, 12));
+      expect(after.last.note, 'Crédito auto · cuota 18/18');
+      expect(after.first.note, 'Crédito auto · cuota 1/18');
+      expect(after.fold<double>(0, (s, t) => s + t.amount), 3000000);
+
+      await db.close();
+    });
+  });
+
   group('updateCategory', () {
     test('propaga nombre e ícono a los movimientos de esa categoría', () async {
       // DBHelper resuelve su propia ruta de base, así que para probar la

@@ -3,7 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../models/category_model.dart';
 import '../models/debt_model.dart';
+import '../models/transaction_model.dart';
 import '../providers/category_provider.dart';
 import '../providers/debt_provider.dart';
 import '../providers/transaction_provider.dart';
@@ -15,17 +17,20 @@ import '../widgets/thousands_input_formatter.dart';
 String _money(double amount) =>
     '\$${NumberFormat.decimalPattern('es_CL').format(amount.round())}';
 
-/// Alta de una deuda en cuotas: monto total, cantidad de cuotas y fecha
-/// de la primera. Antes de guardar muestra exactamente qué cuotas se van
-/// a registrar, porque se insertan todas de una vez.
-class NewDebtScreen extends StatefulWidget {
-  const NewDebtScreen({super.key});
+/// Alta y edición de una deuda en cuotas: monto total, cantidad de cuotas
+/// y fecha de la primera. Antes de guardar muestra exactamente qué cuotas
+/// se van a registrar, porque se insertan (o se rehacen) todas de una vez.
+class DebtFormScreen extends StatefulWidget {
+  /// La deuda a editar, con su avance; null para crear una nueva.
+  final DebtStatus? editing;
+
+  const DebtFormScreen({super.key, this.editing});
 
   @override
-  State<NewDebtScreen> createState() => _NewDebtScreenState();
+  State<DebtFormScreen> createState() => _DebtFormScreenState();
 }
 
-class _NewDebtScreenState extends State<NewDebtScreen> {
+class _DebtFormScreenState extends State<DebtFormScreen> {
   static const int _maxInstallments = 120;
 
   final _nameController = TextEditingController();
@@ -46,6 +51,20 @@ class _NewDebtScreenState extends State<NewDebtScreen> {
     // igual el usuario elige la fecha real del crédito.
     final now = DateTime.now();
     _firstDate = DateTime(now.year, now.month + 1, now.day);
+
+    final editing = widget.editing;
+    if (editing != null) {
+      final debt = editing.debt;
+      _nameController.text = debt.name;
+      _amountController.text = formatAmountForInput(debt.totalAmount);
+      _installmentsController.text = '${debt.installments}';
+      _firstDate = DateTime(debt.firstDate.year, debt.firstDate.month, debt.firstDate.day);
+      // Si la categoría se eliminó, byId da null y el formulario obliga
+      // a elegir otra en vez de reasignar en silencio.
+      _categoryId =
+          editing.installments.isEmpty ? null : editing.installments.first.categoryId;
+    }
+
     // Redibuja la vista previa y la barra "Listo" mientras se escribe.
     for (final c in [_nameController, _amountController, _installmentsController]) {
       c.addListener(_refresh);
@@ -80,6 +99,7 @@ class _NewDebtScreenState extends State<NewDebtScreen> {
     if (amount <= 0 || installments < 1 || installments > _maxInstallments) return null;
     final name = _nameController.text.trim();
     return DebtModel(
+      id: widget.editing?.debt.id,
       name: name.isEmpty ? 'Deuda' : name,
       totalAmount: amount,
       installments: installments,
@@ -156,12 +176,20 @@ class _NewDebtScreenState extends State<NewDebtScreen> {
       _showMessage('Selecciona una categoría', isError: true);
       return;
     }
+    final editError = _editError(debt);
+    if (editError != null) {
+      _showMessage(editError, isError: true);
+      return;
+    }
 
     setState(() => _saving = true);
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     final transactions = context.read<TransactionProvider>();
-    final ok = await context.read<DebtProvider>().addDebt(debt, category);
+    final debts = context.read<DebtProvider>();
+    final ok = widget.editing == null
+        ? await debts.addDebt(debt, category)
+        : await debts.updateDebt(debt, category);
     if (!mounted) return;
     if (!ok) {
       setState(() => _saving = false);
@@ -169,25 +197,81 @@ class _NewDebtScreenState extends State<NewDebtScreen> {
       return;
     }
 
-    // Las cuotas se insertaron como movimientos: sin recargar, el
-    // Historial y el saldo no las verían hasta reabrir la app.
+    // Las cuotas se insertaron o se rehicieron como movimientos: sin
+    // recargar, el Historial y el saldo no las verían hasta reabrir la app.
     await transactions.load();
     HapticFeedback.lightImpact();
     navigator.pop();
     messenger.showSnackBar(SnackBar(
-      content: Text('Deuda guardada: ${debt.installments} '
-          '${debt.installments == 1 ? 'cuota' : 'cuotas'} registradas'),
+      content: Text(widget.editing != null
+          ? 'Deuda actualizada'
+          : 'Deuda guardada: ${debt.installments} '
+              '${debt.installments == 1 ? 'cuota' : 'cuotas'} registradas'),
     ));
+  }
+
+  /// Al editar con un calendario o monto nuevo, las cuotas pendientes se
+  /// rehacen repartiendo lo que falta pagar. Eso no tiene sentido si no
+  /// queda ninguna cuota por delante, o si lo pagado ya cubre el total.
+  String? _editError(DebtModel draft) {
+    final editing = widget.editing;
+    if (editing == null || !draft.scheduleDiffers(editing.debt)) return null;
+    final pending = _pendingPreview(draft, editing);
+    if (pending.isEmpty) {
+      return 'Con esa fecha y cantidad de cuotas ya no queda ninguna por pagar.';
+    }
+    if (draft.totalAmount <= editing.paidAmount) {
+      return 'El total tiene que ser mayor a lo ya pagado (${_money(editing.paidAmount)}).';
+    }
+    return null;
+  }
+
+  /// Cuotas pendientes que quedarían al guardar. La categoría no cambia
+  /// montos ni fechas, así que para la vista previa basta una cualquiera.
+  List<TransactionModel> _pendingPreview(DebtModel draft, DebtStatus editing) {
+    return draft.rebuildPending(
+      debtId: editing.debt.id ?? 0,
+      category: const CategoryModel(id: 0, name: '', iconKey: 'other'),
+      paidAmount: editing.paidAmount,
+      now: DateTime.now(),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final categoryProvider = context.watch<CategoryProvider>();
     final draft = _draft();
+    final editing = widget.editing;
     final showDoneBar = _amountFocusNode.hasFocus || _installmentsFocusNode.hasFocus;
 
+    final Widget preview;
+    if (draft == null) {
+      preview = const SizedBox.shrink();
+    } else if (editing == null) {
+      preview = _Preview(key: const ValueKey('nueva'), debt: draft);
+    } else if (!draft.scheduleDiffers(editing.debt)) {
+      preview = const _PreviewBox(
+        key: ValueKey('sin-cambios'),
+        children: [
+          Text(
+            'Solo se actualizan el nombre y la categoría de sus cuotas. '
+            'Los montos y las fechas quedan como están.',
+            style: TextStyle(fontSize: 11, color: AppColors.urban100),
+          ),
+        ],
+      );
+    } else {
+      preview = _EditPreview(
+        key: const ValueKey('rehacer'),
+        pending: _pendingPreview(draft, editing),
+        paidCount: editing.paidCount,
+        paidAmount: editing.paidAmount,
+        totalAmount: draft.totalAmount,
+      );
+    }
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Nueva deuda')),
+      appBar: AppBar(title: Text(editing == null ? 'Nueva deuda' : 'Editar deuda')),
       body: SafeArea(
         child: Stack(
           children: [
@@ -258,9 +342,7 @@ class _NewDebtScreenState extends State<NewDebtScreen> {
 
                   AnimatedSwitcher(
                     duration: const Duration(milliseconds: 220),
-                    child: draft == null
-                        ? const SizedBox.shrink()
-                        : _Preview(key: const ValueKey('preview'), debt: draft),
+                    child: preview,
                   ),
                   const SizedBox(height: 14),
 
@@ -288,8 +370,8 @@ class _NewDebtScreenState extends State<NewDebtScreen> {
                           else
                             const Icon(Icons.check, size: 18),
                           const SizedBox(width: 8),
-                          const Text('Guardar deuda',
-                              style: TextStyle(fontWeight: FontWeight.bold)),
+                          Text(editing == null ? 'Guardar deuda' : 'Guardar cambios',
+                              style: const TextStyle(fontWeight: FontWeight.bold)),
                         ],
                       ),
                     ),
@@ -520,6 +602,125 @@ class _Preview extends StatelessWidget {
     final endOfToday = DateTime(now.year, now.month, now.day, 23, 59, 59, 999);
     final alreadyDue = dates.where((d) => !d.isAfter(endOfToday)).length;
 
+    return _PreviewBox(
+      children: [
+        Text(
+          '${debt.installments} ${debt.installments == 1 ? 'cuota' : 'cuotas'} '
+          'de ${_money(amounts.first)}',
+          style: AppTheme.display(size: 15),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          debt.installments == 1
+              ? 'El ${format.format(dates.first)}'
+              : 'Del ${format.format(dates.first)} al ${format.format(dates.last)}',
+          style: const TextStyle(fontSize: 11, color: AppColors.urban100),
+        ),
+        if (lastDiffers) ...[
+          const SizedBox(height: 4),
+          Text(
+            'La última es de ${_money(amounts.last)} para cuadrar el total.',
+            style: const TextStyle(fontSize: 10, color: AppColors.urban300),
+          ),
+        ],
+        if (alreadyDue > 0) ...[
+          const SizedBox(height: 4),
+          Text(
+            alreadyDue == 1
+                ? 'La primera cuota ya pasó: queda registrada como gasto en su fecha.'
+                : '$alreadyDue cuotas ya pasaron: quedan registradas como gasto en su fecha.',
+            style: const TextStyle(fontSize: 10, color: AppColors.urban300),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Qué pasa con las cuotas al guardar una edición que cambia el
+/// calendario o el monto: las pasadas quedan y las pendientes se rehacen.
+class _EditPreview extends StatelessWidget {
+  final List<TransactionModel> pending;
+  final int paidCount;
+  final double paidAmount;
+  final double totalAmount;
+
+  const _EditPreview({
+    super.key,
+    required this.pending,
+    required this.paidCount,
+    required this.paidAmount,
+    required this.totalAmount,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final format = DateFormat('d MMM yyyy', 'es_CL');
+    const detail = TextStyle(fontSize: 10, color: AppColors.urban300);
+
+    // Mismos mensajes que frena _editError al guardar, para que el
+    // problema se vea antes de apretar el botón.
+    if (pending.isEmpty) {
+      return const _PreviewBox(children: [
+        Text('Con esa fecha y cantidad de cuotas ya no queda ninguna por pagar.',
+            style: TextStyle(fontSize: 11, color: AppColors.expense)),
+      ]);
+    }
+    if (totalAmount <= paidAmount) {
+      return _PreviewBox(children: [
+        Text('El total tiene que ser mayor a lo ya pagado (${_money(paidAmount)}).',
+            style: const TextStyle(fontSize: 11, color: AppColors.expense)),
+      ]);
+    }
+
+    final lastDiffers =
+        pending.length > 1 && pending.last.amount != pending.first.amount;
+    return _PreviewBox(
+      children: [
+        Text(
+          'Quedan ${pending.length} ${pending.length == 1 ? 'cuota' : 'cuotas'} '
+          'de ${_money(pending.first.amount)}',
+          style: AppTheme.display(size: 15),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          pending.length == 1
+              ? 'El ${format.format(pending.first.date)}'
+              : 'Del ${format.format(pending.first.date)} al ${format.format(pending.last.date)}',
+          style: const TextStyle(fontSize: 11, color: AppColors.urban100),
+        ),
+        if (lastDiffers) ...[
+          const SizedBox(height: 4),
+          Text('La última es de ${_money(pending.last.amount)} para cuadrar el total.',
+              style: detail),
+        ],
+        if (paidCount > 0) ...[
+          const SizedBox(height: 4),
+          Text(
+            paidCount == 1
+                ? 'La cuota que ya pasó (${_money(paidAmount)}) no se toca.'
+                : 'Las $paidCount cuotas que ya pasaron (${_money(paidAmount)}) no se tocan.',
+            style: detail,
+          ),
+        ],
+        const SizedBox(height: 4),
+        const Text(
+          'Las cuotas pendientes se vuelven a calcular: si editaste alguna a mano, '
+          'se reemplaza.',
+          style: detail,
+        ),
+      ],
+    );
+  }
+}
+
+class _PreviewBox extends StatelessWidget {
+  final List<Widget> children;
+
+  const _PreviewBox({super.key, required this.children});
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(14),
@@ -528,39 +729,7 @@ class _Preview extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.urbanBlue.withValues(alpha: 0.6)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '${debt.installments} ${debt.installments == 1 ? 'cuota' : 'cuotas'} '
-            'de ${_money(amounts.first)}',
-            style: AppTheme.display(size: 15),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            debt.installments == 1
-                ? 'El ${format.format(dates.first)}'
-                : 'Del ${format.format(dates.first)} al ${format.format(dates.last)}',
-            style: const TextStyle(fontSize: 11, color: AppColors.urban100),
-          ),
-          if (lastDiffers) ...[
-            const SizedBox(height: 4),
-            Text(
-              'La última es de ${_money(amounts.last)} para cuadrar el total.',
-              style: const TextStyle(fontSize: 10, color: AppColors.urban300),
-            ),
-          ],
-          if (alreadyDue > 0) ...[
-            const SizedBox(height: 4),
-            Text(
-              alreadyDue == 1
-                  ? 'La primera cuota ya pasó: queda registrada como gasto en su fecha.'
-                  : '$alreadyDue cuotas ya pasaron: quedan registradas como gasto en su fecha.',
-              style: const TextStyle(fontSize: 10, color: AppColors.urban300),
-            ),
-          ],
-        ],
-      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: children),
     );
   }
 }

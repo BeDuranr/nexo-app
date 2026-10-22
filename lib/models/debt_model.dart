@@ -71,13 +71,32 @@ class DebtModel {
   /// Montos de cada cuota, en pesos enteros. Si el total no se divide
   /// exacto, la última absorbe la diferencia: así la suma da siempre el
   /// total que escribió el usuario.
-  List<double> amounts() {
-    final base = (totalAmount / installments).floorToDouble();
+  List<double> amounts() => _split(totalAmount, installments);
+
+  static List<double> _split(double total, int parts) {
+    if (parts == 0) return const [];
+    final base = (total / parts).floorToDouble();
     return [
-      for (var i = 0; i < installments - 1; i++) base,
-      totalAmount - base * (installments - 1),
+      for (var i = 0; i < parts - 1; i++) base,
+      total - base * (parts - 1),
     ];
   }
+
+  /// Nota automática de cada cuota. También sirve para reconocerla al
+  /// editar la deuda: una nota que el usuario cambió a mano no se pisa.
+  String installmentNote(int number) => '$name · cuota $number/$installments';
+
+  bool isAutoNote(String note) => note.startsWith('$name · cuota ');
+
+  /// ¿Cambia el calendario o los montos respecto de [other]? Si solo
+  /// cambió el nombre o la categoría, editar no tiene por qué recalcular
+  /// las cuotas, y así se respeta una cuota futura editada a mano.
+  bool scheduleDiffers(DebtModel other) =>
+      totalAmount != other.totalAmount ||
+      installments != other.installments ||
+      firstDate.year != other.firstDate.year ||
+      firstDate.month != other.firstDate.month ||
+      firstDate.day != other.firstDate.day;
 
   /// Las cuotas como movimientos listos para insertar. [debtId] es el id
   /// que SQLite le dio a la deuda recién creada.
@@ -89,17 +108,48 @@ class DebtModel {
     final values = amounts();
     return [
       for (var i = 0; i < installments; i++)
-        TransactionModel(
-          amount: values[i],
-          type: MovementType.expense,
-          categoryId: category.id!,
-          categoryName: category.name,
-          categoryIconKey: category.iconKey,
-          note: '$name · cuota ${i + 1}/$installments',
-          date: dates[i],
-          debtId: debtId,
-        ),
+        _installment(i, values[i], dates[i], debtId, category),
     ];
+  }
+
+  /// Cuotas que reemplazan a las pendientes al editar la deuda: las del
+  /// calendario nuevo con fecha posterior a hoy, repartiéndose en partes
+  /// iguales lo que falta pagar ([paidAmount] es lo que suman las cuotas
+  /// que ya pasaron, que no se tocan).
+  ///
+  /// Se reparte lo que falta y no el total entre todas, para que la suma
+  /// siga dando el total aunque una cuota pasada se haya editado.
+  List<TransactionModel> rebuildPending({
+    required int debtId,
+    required CategoryModel category,
+    required double paidAmount,
+    required DateTime now,
+  }) {
+    final endOfToday = DateTime(now.year, now.month, now.day, 23, 59, 59, 999);
+    final dates = dueDates();
+    final pending = [
+      for (var i = 0; i < dates.length; i++)
+        if (dates[i].isAfter(endOfToday)) i,
+    ];
+    final values = _split(totalAmount - paidAmount, pending.length);
+    return [
+      for (var k = 0; k < pending.length; k++)
+        _installment(pending[k], values[k], dates[pending[k]], debtId, category),
+    ];
+  }
+
+  TransactionModel _installment(
+      int index, double amount, DateTime date, int debtId, CategoryModel category) {
+    return TransactionModel(
+      amount: amount,
+      type: MovementType.expense,
+      categoryId: category.id!,
+      categoryName: category.name,
+      categoryIconKey: category.iconKey,
+      note: installmentNote(index + 1),
+      date: date,
+      debtId: debtId,
+    );
   }
 }
 

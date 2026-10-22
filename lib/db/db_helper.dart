@@ -427,6 +427,83 @@ class DBHelper {
     return debtId;
   }
 
+  /// Guarda la deuda editada. Las cuotas que ya pasaron no se tocan, salvo
+  /// el nombre y la categoría: esa plata ya se gastó. Las pendientes se
+  /// regeneran si cambió el calendario o el monto (ver
+  /// `DebtModel.rebuildPending`); si no, solo se renombran y se les cambia
+  /// la categoría, respetando un monto editado a mano.
+  Future<void> updateDebt(DebtModel updated, CategoryModel category,
+      {required DateTime now}) async {
+    final db = await database;
+    await db.transaction((txn) => updateDebtWith(txn, updated, category, now: now));
+  }
+
+  /// Cuerpo de [updateDebt], expuesto para los tests.
+  Future<void> updateDebtWith(
+      DatabaseExecutor txn, DebtModel updated, CategoryModel category,
+      {required DateTime now}) async {
+    final id = updated.id!;
+    final oldRows = await txn.query('debts', where: 'id = ?', whereArgs: [id]);
+    if (oldRows.isEmpty) return;
+    final old = DebtModel.fromMap(oldRows.first);
+
+    final endOfToday = DateTime(now.year, now.month, now.day, 23, 59, 59, 999);
+    final installments = (await txn.query('transactions',
+            where: 'debt_id = ?', whereArgs: [id], orderBy: 'date ASC, id ASC'))
+        .map(TransactionModel.fromMap)
+        .toList();
+    final past = installments.where((t) => !t.date.isAfter(endOfToday)).toList();
+    final pending = installments.where((t) => t.date.isAfter(endOfToday)).toList();
+
+    await txn.update('debts', updated.toMap(), where: 'id = ?', whereArgs: [id]);
+
+    final categoryFields = {
+      'category_id': category.id,
+      'category_name': category.name,
+      'category_icon_key': category.iconKey,
+    };
+
+    // Las pasadas: misma plata y misma fecha, solo nombre y categoría.
+    for (var i = 0; i < past.length; i++) {
+      await txn.update(
+        'transactions',
+        {
+          ...categoryFields,
+          if (old.isAutoNote(past[i].note)) 'note': updated.installmentNote(i + 1),
+        },
+        where: 'id = ?',
+        whereArgs: [past[i].id],
+      );
+    }
+
+    if (updated.scheduleDiffers(old)) {
+      for (final t in pending) {
+        await txn.delete('transactions', where: 'id = ?', whereArgs: [t.id]);
+      }
+      final paid = past.fold<double>(0, (sum, t) => sum + t.amount);
+      final rebuilt = updated.rebuildPending(
+          debtId: id, category: category, paidAmount: paid, now: now);
+      for (final t in rebuilt) {
+        await txn.insert('transactions', t.toMap()..remove('id'));
+      }
+    } else {
+      for (var i = 0; i < pending.length; i++) {
+        await txn.update(
+          'transactions',
+          {
+            ...categoryFields,
+            if (old.isAutoNote(pending[i].note))
+              'note': updated.installmentNote(past.length + i + 1),
+          },
+          where: 'id = ?',
+          whereArgs: [pending[i].id],
+        );
+      }
+    }
+
+    await _touch(txn);
+  }
+
   /// Elimina la deuda y sus cuotas **futuras**. Las que ya pasaron se
   /// quedan en el Historial como gastos sueltos: esa plata ya se gastó, y
   /// borrarlas cambiaría los saldos de meses cerrados.

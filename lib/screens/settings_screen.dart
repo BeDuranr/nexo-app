@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/backup_provider.dart';
 import '../providers/category_provider.dart';
+import '../providers/debt_provider.dart';
 import '../providers/transaction_provider.dart';
 import '../services/google_auth_service.dart';
 import '../theme/app_theme.dart';
@@ -68,6 +69,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await context.read<CategoryProvider>().load();
       if (!mounted) return;
       await context.read<TransactionProvider>().load();
+      if (!mounted) return;
+      await context.read<DebtProvider>().load();
       if (!mounted) return;
       HapticFeedback.mediumImpact();
       _toast('Datos restaurados desde el respaldo');

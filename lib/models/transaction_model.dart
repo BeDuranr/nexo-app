@@ -15,6 +15,11 @@ class TransactionModel {
   final String note;
   final DateTime date;
 
+  /// Deuda en cuotas a la que pertenece, o null si es un movimiento
+  /// suelto. Una cuota es un gasto común con fecha futura: este id solo
+  /// sirve para agruparlas en la pestaña Deudas.
+  final int? debtId;
+
   const TransactionModel({
     this.id,
     required this.amount,
@@ -24,6 +29,7 @@ class TransactionModel {
     required this.categoryIconKey,
     required this.note,
     required this.date,
+    this.debtId,
   });
 
   Map<String, dynamic> toMap() {
@@ -36,6 +42,7 @@ class TransactionModel {
       'category_icon_key': categoryIconKey,
       'note': note,
       'date': date.toIso8601String(),
+      'debt_id': debtId,
     };
   }
 
@@ -49,6 +56,7 @@ class TransactionModel {
       categoryIconKey: map['category_icon_key'] as String? ?? 'other',
       note: map['note'] as String? ?? '',
       date: DateTime.parse(map['date'] as String),
+      debtId: map['debt_id'] as int?,
     );
   }
 }

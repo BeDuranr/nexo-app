@@ -3,7 +3,9 @@ import 'package:provider/provider.dart';
 
 import '../providers/backup_provider.dart';
 import '../providers/category_provider.dart';
+import '../providers/debt_provider.dart';
 import '../providers/transaction_provider.dart';
+import 'debts_screen.dart';
 import 'history_screen.dart';
 import 'metrics_screen.dart';
 import 'quick_entry_screen.dart';
@@ -17,7 +19,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
-  static const int _settingsTab = 3;
+  static const int _settingsTab = 4;
 
   int _index = 0;
 
@@ -25,6 +27,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     QuickEntryScreen(),
     HistoryScreen(),
     MetricsScreen(),
+    DebtsScreen(),
     SettingsScreen(),
   ];
 
@@ -36,6 +39,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<CategoryProvider>().load();
       context.read<TransactionProvider>().load();
+      context.read<DebtProvider>().load();
       // Recupera la sesión de Google sin mostrar nada y sube lo que
       // haya quedado pendiente. Si falla, no se avisa acá: la app no
       // depende de esto para funcionar.
@@ -68,7 +72,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // Sin esto el teclado del campo de monto sigue abierto sobre el
     // historial: IgnorePointer bloquea el puntero, pero no el foco.
     FocusScope.of(context).unfocus();
-    // Las cuatro pantallas viven a la vez en el Stack, así que el
+    // Las cinco pantallas viven a la vez en el Stack, así que el
     // initState de Ajustes corre una sola vez al arrancar la app: sin
     // esto, "hay cambios sin respaldar" quedaba congelado en lo que era
     // cierto en ese momento.
@@ -119,6 +123,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           BottomNavigationBarItem(
             icon: Icon(Icons.bar_chart),
             label: 'Métricas',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.event_repeat_outlined),
+            activeIcon: Icon(Icons.event_repeat),
+            label: 'Deudas',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.settings_outlined),

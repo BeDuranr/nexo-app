@@ -13,18 +13,21 @@ pide restaurar.
 | Login con Google | `lib/services/google_auth_service.dart` |
 | Llamadas a Sheets y Drive | `lib/services/sheets_backup_service.dart` |
 | Estado (cuenta, último respaldo, pendientes) | `lib/providers/backup_provider.dart` |
-| Pantalla | `lib/screens/settings_screen.dart` (4ª tab, "Ajustes") |
-| Cuenta e id de planilla persistidos | tabla `settings` de SQLite (schema v5) |
+| Pantalla | `lib/screens/settings_screen.dart` (5ª tab, "Ajustes") |
+| Cuenta e id de planilla persistidos | tabla `settings` de SQLite (desde el schema v5) |
 
-La planilla se llama **"Nexo — Respaldo"** y tiene tres hojas:
+La planilla se llama **"Nexo — Respaldo"** y tiene cuatro hojas:
 
-- `movimientos`: `ID, Fecha, Tipo, Monto, ID categoría, Categoría, Ícono, Nota`
+- `movimientos`: `ID, Fecha, Tipo, Monto, ID categoría, Categoría, Ícono, Nota, Deuda`
 - `categorias`: `ID, Nombre, Ícono, Por defecto`
+- `deudas`: `ID, Nombre, Monto total, Cuotas, Primera cuota`
 - `info`: cuándo se actualizó, cuántas filas tiene cada hoja y la versión del formato
 
 **Formato 2 (desde octubre de 2026).** La fecha se guarda como fecha real de Sheets (un número de serie, que se ve como `19/10/2026 14:32` y conserva los milisegundos), el tipo es `Gasto`/`Ingreso`, el monto se ve como `$15.000` y "Por defecto" es `Sí`/`No`. El formato visual se reaplica en cada respaldo y es cosmético: si esa llamada falla, el respaldo igual cuenta como hecho.
 
-**Compatibilidad.** El formato 1 (`id, fecha, …` con fechas ISO y `expense`/`income`) se sigue aceptando al restaurar. Las columnas están en el mismo orden en ambos, y los encabezados se comparan sin mayúsculas ni tildes. Un tipo que no sea Gasto ni Ingreso aborta la restauración, en vez de leerse como gasto.
+**Formato 3 (desde octubre de 2026).** Igual al 2, más la hoja `deudas` y la columna `Deuda` al final de `movimientos`, con el id de la deuda de cada cuota (vacía en los movimientos sueltos). Va al final para que las columnas del formato 2 no se corran.
+
+**Compatibilidad.** Una planilla del formato 2 no tiene hoja `deudas`, y pedirle a Sheets una hoja que no existe es un error: por eso `download` revisa qué hojas hay antes de leerla. Al restaurar, una cuota que apunte a una deuda que no vino queda como gasto suelto. El formato 1 (`id, fecha, …` con fechas ISO y `expense`/`income`) se sigue aceptando al restaurar. Las columnas están en el mismo orden en ambos, y los encabezados se comparan sin mayúsculas ni tildes. Un tipo que no sea Gasto ni Ingreso aborta la restauración, en vez de leerse como gasto.
 
 **La etiqueta de Drive `nexoRespaldo=v1` no es la versión del formato** y no debe cambiar: con ella se reencuentra la planilla después de reinstalar.
 
@@ -33,7 +36,7 @@ escribir). No es incremental a propósito: con este volumen de datos un
 dump entero no puede quedar desincronizado, y es mucho más fácil de
 razonar.
 
-Las tres hojas se reemplazan en **un solo `batchUpdate`**, que Google aplica entero o no aplica: se ajusta el tamaño de la grilla (así desaparecen las filas sobrantes) y se escriben las celdas. Antes cada hoja se borraba y se reescribía en llamadas separadas, y si iOS suspendía la app entre medio, la hoja de movimientos quedaba vacía hasta el siguiente respaldo. Ahora, si se corta, queda el respaldo anterior completo. El formato visual va en otro `batchUpdate`, después de los datos.
+Todas las hojas se reemplazan en **un solo `batchUpdate`**, que Google aplica entero o no aplica: se ajusta el tamaño de la grilla (así desaparecen las filas sobrantes) y se escriben las celdas. Antes cada hoja se borraba y se reescribía en llamadas separadas, y si iOS suspendía la app entre medio, la hoja de movimientos quedaba vacía hasta el siguiente respaldo. Ahora, si se corta, queda el respaldo anterior completo. El formato visual va en otro `batchUpdate`, después de los datos.
 
 ### Cuándo se respalda
 

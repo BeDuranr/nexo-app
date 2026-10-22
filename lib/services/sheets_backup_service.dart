@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/category_model.dart';
+import '../models/debt_model.dart';
 import '../models/transaction_model.dart';
 
 /// Falla esperable del respaldo (sin red, token vencido, planilla
@@ -19,10 +20,17 @@ class SheetsBackupException implements Exception {
 
 /// Lo que hay guardado en la planilla, ya parseado.
 class BackupSnapshot {
-  const BackupSnapshot({required this.categories, required this.transactions});
+  const BackupSnapshot({
+    required this.categories,
+    required this.transactions,
+    this.debts = const [],
+  });
 
   final List<CategoryModel> categories;
   final List<TransactionModel> transactions;
+
+  /// Vacía en las planillas anteriores al formato 3, que no tenían deudas.
+  final List<DebtModel> debts;
 
   bool get isEmpty => categories.isEmpty && transactions.isEmpty;
 }
@@ -53,13 +61,15 @@ class SheetsBackupService {
   static const String _tagValue = 'v1';
 
   /// Versión del contenido de la planilla, anotada en la hoja `info`.
-  /// La 1 tenía encabezados técnicos, fechas ISO y tipos en inglés.
-  static const int _formatVersion = 2;
+  /// La 1 tenía encabezados técnicos, fechas ISO y tipos en inglés. La 3
+  /// suma la hoja `deudas` y la columna "Deuda" al final de movimientos.
+  static const int _formatVersion = 3;
 
   static const String spreadsheetTitle = 'Nexo — Respaldo';
 
   static const String _sheetTransactions = 'movimientos';
   static const String _sheetCategories = 'categorias';
+  static const String _sheetDebts = 'deudas';
   static const String _sheetInfo = 'info';
 
   static const List<String> _categoryHeader = [
@@ -69,6 +79,21 @@ class SheetsBackupService {
     'Por defecto',
   ];
   static const List<String> _transactionHeader = [
+    ..._transactionHeaderV2,
+    'Deuda',
+  ];
+  static const List<String> _debtHeader = [
+    'ID',
+    'Nombre',
+    'Monto total',
+    'Cuotas',
+    'Primera cuota',
+  ];
+
+  /// Encabezado de movimientos del formato 2: el mismo del 3 sin la
+  /// columna "Deuda", que va al final justamente para que las columnas
+  /// anteriores no se corran.
+  static const List<String> _transactionHeaderV2 = [
     'ID',
     'Fecha',
     'Tipo',
@@ -106,6 +131,7 @@ class SheetsBackupService {
   /// visual: el valor guardado sigue siendo un número, que es lo que se
   /// lee al restaurar.
   static const String _datePattern = 'dd/mm/yyyy hh:mm';
+  static const String _dayPattern = 'dd/mm/yyyy';
   static const String _amountPattern = r'$#,##0';
 
   /// Con este locale Sheets agrupa los miles con punto, como la app.
@@ -198,7 +224,7 @@ class SheetsBackupService {
   /// incremental a propósito — con el volumen de esta app un dump entero
   /// es más simple de razonar y no puede quedar desincronizado.
   ///
-  /// Las tres hojas se reemplazan en **un solo** `batchUpdate`, que Google
+  /// Todas las hojas se reemplazan en **un solo** `batchUpdate`, que Google
   /// aplica entero o no aplica. Antes cada hoja se borraba y se reescribía
   /// en llamadas separadas: si iOS suspendía la app entre medio (al
   /// salir, que es justo cuando corre el respaldo automático), la hoja de
@@ -208,6 +234,7 @@ class SheetsBackupService {
     required String spreadsheetId,
     required List<CategoryModel> categories,
     required List<TransactionModel> transactions,
+    List<DebtModel> debts = const [],
   }) async {
     final tabs = <String, List<List<Object?>>>{
       _sheetCategories: [
@@ -232,6 +259,18 @@ class SheetsBackupService {
             tx.categoryName,
             tx.categoryIconKey,
             tx.note,
+            tx.debtId,
+          ],
+      ],
+      _sheetDebts: [
+        _debtHeader,
+        for (final debt in debts)
+          [
+            debt.id,
+            debt.name,
+            debt.totalAmount,
+            debt.installments,
+            dateToSerial(debt.firstDate),
           ],
       ],
       _sheetInfo: [
@@ -239,6 +278,7 @@ class SheetsBackupService {
         ['Última actualización', dateToSerial(DateTime.now())],
         ['Movimientos', transactions.length],
         ['Categorías', categories.length],
+        ['Deudas', debts.length],
         ['Formato', _formatVersion],
       ],
     };
@@ -266,17 +306,7 @@ class SheetsBackupService {
     String spreadsheetId,
     Iterable<String> titles,
   ) async {
-    final body = await _get(
-      Uri.parse('$_sheetsApi/$spreadsheetId').replace(
-          queryParameters: {'fields': 'sheets.properties(sheetId,title)'}),
-      token,
-    );
-    final sheetIds = <String, int>{};
-    for (final sheet in (body?['sheets'] as List<dynamic>?) ?? const []) {
-      final props =
-          (sheet as Map<String, dynamic>)['properties'] as Map<String, dynamic>;
-      sheetIds[props['title'] as String] = props['sheetId'] as int;
-    }
+    final sheetIds = await _existingTabs(token, spreadsheetId);
 
     final missing = titles.where((t) => !sheetIds.containsKey(t)).toList();
     if (missing.isEmpty) return sheetIds;
@@ -298,6 +328,23 @@ class SheetsBackupService {
     for (final reply in (added['replies'] as List<dynamic>?) ?? const []) {
       final props = ((reply as Map<String, dynamic>)['addSheet']
           as Map<String, dynamic>)['properties'] as Map<String, dynamic>;
+      sheetIds[props['title'] as String] = props['sheetId'] as int;
+    }
+    return sheetIds;
+  }
+
+  /// Id numérico de cada hoja que ya existe, por título.
+  Future<Map<String, int>> _existingTabs(
+      String token, String spreadsheetId) async {
+    final body = await _get(
+      Uri.parse('$_sheetsApi/$spreadsheetId').replace(
+          queryParameters: {'fields': 'sheets.properties(sheetId,title)'}),
+      token,
+    );
+    final sheetIds = <String, int>{};
+    for (final sheet in (body?['sheets'] as List<dynamic>?) ?? const []) {
+      final props =
+          (sheet as Map<String, dynamic>)['properties'] as Map<String, dynamic>;
       sheetIds[props['title'] as String] = props['sheetId'] as int;
     }
     return sheetIds;
@@ -390,6 +437,15 @@ class SheetsBackupService {
               pattern: _datePattern))
           ..add(_numberFormat(transactionsId, column: 3, type: 'CURRENCY',
               pattern: _amountPattern));
+      }
+
+      final debtsId = sheetIds[_sheetDebts];
+      if (debtsId != null) {
+        requests
+          ..add(_numberFormat(debtsId, column: 2, type: 'CURRENCY',
+              pattern: _amountPattern))
+          ..add(_numberFormat(debtsId, column: 4, type: 'DATE',
+              pattern: _dayPattern));
       }
 
       final infoId = sheetIds[_sheetInfo];
@@ -493,9 +549,17 @@ class SheetsBackupService {
     final transactionRows =
         await _readTab(token, spreadsheetId, _sheetTransactions);
 
+    // Las planillas de los formatos 1 y 2 no tienen esta hoja, y pedir
+    // una hoja que no existe es un error de Sheets, no una lista vacía.
+    final tabs = await _existingTabs(token, spreadsheetId);
+    final debtRows = tabs.containsKey(_sheetDebts)
+        ? await _readTab(token, spreadsheetId, _sheetDebts)
+        : const <List<dynamic>>[];
+
     return BackupSnapshot(
       categories: parseCategories(categoryRows),
       transactions: parseTransactions(transactionRows),
+      debts: parseDebts(debtRows),
     );
   }
 
@@ -549,7 +613,9 @@ class SheetsBackupService {
 
   List<TransactionModel> parseTransactions(List<List<dynamic>> rows) {
     if (rows.isEmpty) return const [];
-    _checkHeader(rows.first, [_transactionHeader, _transactionHeaderV1],
+    _checkHeader(
+        rows.first,
+        [_transactionHeader, _transactionHeaderV2, _transactionHeaderV1],
         _sheetTransactions);
 
     final transactions = <TransactionModel>[];
@@ -594,9 +660,48 @@ class SheetsBackupService {
         categoryName: _textOr(row, 5, 'Sin categoría'),
         categoryIconKey: _textOr(row, 6, 'other'),
         note: _text(row, 7),
+        // Vacía en los formatos 1 y 2, y en los movimientos sueltos.
+        debtId: _intOrNull(row, 8),
       ));
     }
     return transactions;
+  }
+
+  List<DebtModel> parseDebts(List<List<dynamic>> rows) {
+    if (rows.isEmpty) return const [];
+    _checkHeader(rows.first, [_debtHeader], _sheetDebts);
+
+    final debts = <DebtModel>[];
+    for (var i = 1; i < rows.length; i++) {
+      final row = rows[i];
+      if (_isBlank(row)) continue;
+
+      final name = _text(row, 1);
+      final total = _doubleOrNull(row, 2);
+      final installments = _intOrNull(row, 3);
+      final firstDate = _dateOrNull(row, 4);
+      // Sin estos datos la deuda no se puede mostrar. Sus cuotas sí están
+      // completas en movimientos, así que se niega igual que con una
+      // fecha ilegible: mejor no tocar nada que restaurar a medias.
+      if (name.isEmpty ||
+          total == null ||
+          installments == null ||
+          installments < 1 ||
+          firstDate == null) {
+        throw SheetsBackupException(
+          'La fila ${i + 1} de "$_sheetDebts" está incompleta o ilegible.',
+        );
+      }
+
+      debts.add(DebtModel(
+        id: _intOrNull(row, 0),
+        name: name,
+        totalAmount: total,
+        installments: installments,
+        firstDate: firstDate,
+      ));
+    }
+    return debts;
   }
 
   /// Formato 2: número de serie de Sheets (llega como número gracias a
@@ -626,13 +731,19 @@ class SheetsBackupService {
   ///
   /// [accepted] trae un encabezado por cada formato que se sabe leer. Se
   /// comparan sin mayúsculas ni tildes, que no cambian qué columna es cuál.
+  ///
+  /// Cada formato se compara con su propio ancho: el 2 tiene una columna
+  /// menos que el 3, y la celda que falta llega vacía.
   void _checkHeader(
       List<dynamic> row, List<List<String>> accepted, String tab) {
-    final width = accepted.first.length;
-    final actual = [for (var i = 0; i < width; i++) _normalize(_text(row, i))];
-    final matches = accepted.any(
-        (header) => header.map(_normalize).join(',') == actual.join(','));
-    if (!matches) {
+    bool matches(List<String> header) {
+      for (var i = 0; i < header.length; i++) {
+        if (_normalize(_text(row, i)) != _normalize(header[i])) return false;
+      }
+      return true;
+    }
+
+    if (!accepted.any(matches)) {
       throw SheetsBackupException(
         'La hoja "$tab" no tiene las columnas esperadas.',
         detail: 'se esperaba: ${accepted.first.join(', ')}',

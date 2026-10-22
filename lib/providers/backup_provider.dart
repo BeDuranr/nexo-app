@@ -147,6 +147,7 @@ class BackupProvider extends ChangeNotifier {
         spreadsheetId: spreadsheetId,
         categories: await _db.getCategories(),
         transactions: await _db.getTransactions(),
+        debts: await _db.getDebts(),
       );
 
       final now = DateTime.now();
@@ -212,6 +213,7 @@ class BackupProvider extends ChangeNotifier {
       await _db.replaceAllData(
         categories: snapshot.categories,
         transactions: snapshot.transactions,
+        debts: snapshot.debts,
       );
       await _loadStoredState();
       return true;

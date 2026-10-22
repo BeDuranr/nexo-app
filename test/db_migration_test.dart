@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nexo/db/db_helper.dart';
 import 'package:nexo/models/category_model.dart';
+import 'package:nexo/models/debt_model.dart';
+import 'package:nexo/models/transaction_model.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// Crea una base con el schema v1 original (íconos como emoji, columnas
@@ -61,6 +63,15 @@ Future<Database> _openLegacyV1(DatabaseFactory factory) async {
 
   return db;
 }
+
+const _category = CategoryModel(id: 1, name: 'Comida', iconKey: 'food');
+
+final _carLoan = DebtModel(
+  name: 'Crédito auto',
+  totalAmount: 3000000,
+  installments: 12,
+  firstDate: DateTime(2026, 11, 30),
+);
 
 void main() {
   sqfliteFfiInit();
@@ -186,6 +197,87 @@ void main() {
       final rows = await db.query('settings', where: 'key = ?',
           whereArgs: ['ultimo_respaldo']);
       expect(rows.single['value'], '2026-10-18T10:00:00.000');
+
+      await db.close();
+    });
+  });
+
+  group('migración v5 → v6 (deudas en cuotas)', () {
+    test('agrega la tabla y la columna sin tocar los movimientos', () async {
+      final db = await _openLegacyV1(factory);
+      await migrate(db, 1);
+
+      final tables = await db.rawQuery(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'debts'");
+      expect(tables, isNotEmpty);
+
+      // Los movimientos que ya existían quedan como sueltos, con todo lo
+      // demás intacto.
+      final txs = await db.query('transactions', orderBy: 'id ASC');
+      expect(txs.length, 2);
+      expect(txs.every((t) => t['debt_id'] == null), isTrue);
+      expect(txs[0]['note'], 'almuerzo');
+      expect(txs[1]['category_name'], 'Categoría borrada');
+
+      await db.close();
+    });
+
+    test('es idempotente: volver a correr el paso no falla', () async {
+      final db = await _openLegacyV1(factory);
+      await migrate(db, 1);
+      await helper.insertDebtWith(db, _carLoan, _category);
+
+      // SQLite no tiene ADD COLUMN IF NOT EXISTS: sin el chequeo, esto
+      // reventaba con "duplicate column name".
+      await helper.onUpgrade(db, 5, DBHelper.schemaVersion);
+
+      expect((await db.query('debts')).length, 1);
+      expect((await db.query('transactions', where: 'debt_id IS NOT NULL')).length, 12);
+
+      await db.close();
+    });
+  });
+
+  group('deudas', () {
+    test('crear una deuda registra todas sus cuotas', () async {
+      final db = await _openLegacyV1(factory);
+      await migrate(db, 1);
+
+      final debtId = await helper.insertDebtWith(db, _carLoan, _category);
+
+      final installments = (await db.query('transactions',
+              where: 'debt_id = ?', whereArgs: [debtId], orderBy: 'date ASC'))
+          .map(TransactionModel.fromMap)
+          .toList();
+      expect(installments.length, 12);
+      expect(installments.first.date, DateTime(2026, 11, 30, 12));
+      expect(installments.first.categoryId, 1);
+      expect(installments.fold<double>(0, (s, t) => s + t.amount), 3000000);
+      // Y avisa al respaldo que hay algo nuevo para subir.
+      expect(await db.query('settings', where: "key = 'data_modificada'"), isNotEmpty);
+
+      await db.close();
+    });
+
+    test('eliminarla borra las cuotas futuras y deja las pasadas como sueltas',
+        () async {
+      final db = await _openLegacyV1(factory);
+      await migrate(db, 1);
+      final debtId = await helper.insertDebtWith(db, _carLoan, _category);
+
+      // Pasaron noviembre, diciembre y enero.
+      await helper.deleteDebtWith(db, debtId, now: DateTime(2027, 1, 30, 8));
+
+      expect(await db.query('debts'), isEmpty);
+      final remaining = (await db.query('transactions',
+              where: "note LIKE 'Crédito auto%'", orderBy: 'date ASC'))
+          .map(TransactionModel.fromMap)
+          .toList();
+      expect(remaining.length, 3);
+      expect(remaining.last.date, DateTime(2027, 1, 30, 12));
+      expect(remaining.every((t) => t.debtId == null), isTrue);
+      // Los movimientos que no eran de la deuda no se tocan.
+      expect((await db.query('transactions')).length, 5);
 
       await db.close();
     });

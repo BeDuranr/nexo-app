@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:nexo/models/category_model.dart';
+import 'package:nexo/models/debt_model.dart';
 import 'package:nexo/models/transaction_model.dart';
 import 'package:nexo/services/sheets_backup_service.dart';
 
@@ -238,6 +239,99 @@ void main() {
     });
   });
 
+  group('formato 3 (deudas en cuotas)', () {
+    final debt = DebtModel(
+      id: 4,
+      name: 'Crédito auto',
+      totalAmount: 3000000,
+      installments: 12,
+      firstDate: DateTime(2026, 11, 30),
+    );
+
+    test('las deudas y el vínculo de cada cuota se restauran idénticos', () async {
+      final installments = debt
+          .buildInstallments(
+            debtId: 4,
+            category: const CategoryModel(id: 1, name: 'Comida', iconKey: 'food'),
+          )
+          .asMap()
+          .entries
+          .map((e) => TransactionModel(
+                id: e.key + 10,
+                amount: e.value.amount,
+                type: e.value.type,
+                categoryId: e.value.categoryId,
+                categoryName: e.value.categoryName,
+                categoryIconKey: e.value.categoryIconKey,
+                note: e.value.note,
+                date: e.value.date,
+                debtId: e.value.debtId,
+              ))
+          .toList();
+      final loose = TransactionModel(
+        id: 1,
+        amount: 5000,
+        type: MovementType.expense,
+        categoryId: 1,
+        categoryName: 'Comida',
+        categoryIconKey: 'food',
+        note: '',
+        date: DateTime(2026, 10, 19, 13),
+      );
+
+      final fake = _FakeSheets();
+      final sheets = SheetsBackupService(client: fake.client);
+      await sheets.upload(
+        token: 't',
+        spreadsheetId: 's',
+        categories: const [],
+        transactions: [loose, ...installments],
+        debts: [debt],
+      );
+      final snapshot = await sheets.download(token: 't', spreadsheetId: 's');
+
+      expect(snapshot.debts.map((d) => d.toMap()), [debt.toMap()]);
+      expect(
+        snapshot.transactions.map((t) => t.toMap()),
+        [loose, ...installments].map((t) => t.toMap()),
+      );
+      expect(snapshot.transactions.first.debtId, isNull);
+    });
+
+    test('una planilla del formato 2, sin hoja de deudas, se sigue restaurando',
+        () async {
+      // Pedirle a Sheets una hoja que no existe es un error, no una lista
+      // vacía: si se pidiera igual, ningún respaldo viejo se restauraría.
+      final fake = _FakeSheets()
+        ..tabs['movimientos'] = [
+          ['ID', 'Fecha', 'Tipo', 'Monto', 'ID categoría', 'Categoría', 'Ícono', 'Nota'],
+          [1, 45000, 'Gasto', 5000, 1, 'Comida', 'food', 'almuerzo'],
+        ]
+        ..tabs['categorias'] = [
+          ['ID', 'Nombre', 'Ícono', 'Por defecto'],
+          [1, 'Comida', 'food', 'Sí'],
+        ];
+
+      final snapshot = await SheetsBackupService(client: fake.client)
+          .download(token: 't', spreadsheetId: 's');
+
+      expect(fake.requests.any((r) => r.url.path.endsWith('/values/deudas')), isFalse);
+      expect(snapshot.debts, isEmpty);
+      expect(snapshot.transactions.single.note, 'almuerzo');
+      expect(snapshot.transactions.single.debtId, isNull);
+    });
+
+    test('se niega si una deuda quedó ilegible', () {
+      expect(
+        () => service.parseDebts(<List<dynamic>>[
+          ['ID', 'Nombre', 'Monto total', 'Cuotas', 'Primera cuota'],
+          [4, 'Crédito auto', 3000000, 'doce', 46356],
+        ]),
+        throwsA(isA<SheetsBackupException>()),
+      );
+    });
+  });
+
   group('subida', () {
     TransactionModel tx(int id) => TransactionModel(
           id: id,
@@ -250,7 +344,7 @@ void main() {
           date: DateTime(2026, 10, 19),
         );
 
-    test('reemplaza las tres hojas en un solo batchUpdate, sin borrar antes', () async {
+    test('reemplaza todas las hojas en un solo batchUpdate, sin borrar antes', () async {
       // Si iOS suspende la app entre dos llamadas, ninguna hoja puede
       // quedar a medio escribir: los datos van todos en una sola, que
       // Google aplica entera o no aplica.
@@ -265,7 +359,8 @@ void main() {
       expect(fake.requests.where((r) => r.url.path.endsWith(':clear')), isEmpty);
       final dataBatches = fake.batches.where((b) => b.any((r) => r.containsKey('updateCells')));
       expect(dataBatches.length, 1);
-      expect(dataBatches.single.where((r) => r.containsKey('updateCells')).length, 3);
+      // movimientos, categorias, deudas e info.
+      expect(dataBatches.single.where((r) => r.containsKey('updateCells')).length, 4);
     });
 
     test('achica la grilla para no dejar filas viejas al final', () async {
@@ -281,7 +376,7 @@ void main() {
 
       // Encabezado + 1 movimiento + la fila de margen.
       expect(fake.rowCounts['movimientos'], 3);
-      expect(fake.columnCounts['movimientos'], 8);
+      expect(fake.columnCounts['movimientos'], 9);
     });
 
     test('vuelve a crear una hoja que se borró a mano', () async {

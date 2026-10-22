@@ -37,6 +37,8 @@ class _EditTransactionScreenState extends State<EditTransactionScreen> {
         original.date.minute,
         original.date.second,
       ),
+      // Editar una cuota (ej. un atraso con interés) no la saca de su deuda.
+      debtId: original.debtId,
     );
 
     final messenger = ScaffoldMessenger.of(context);

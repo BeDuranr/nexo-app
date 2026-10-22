@@ -2,6 +2,7 @@ import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
 import '../models/category_model.dart';
+import '../models/debt_model.dart';
 import '../models/transaction_model.dart';
 
 /// Acceso centralizado a la base de datos SQLite local de Nexo.
@@ -17,7 +18,7 @@ class DBHelper {
   /// Versión actual del schema. Todo cambio va por un paso nuevo de
   /// [_onUpgrade]: hay datos reales en producción, `_onCreate` solo
   /// describe cómo nace una instalación desde cero.
-  static const int schemaVersion = 5;
+  static const int schemaVersion = 6;
 
   /// Marca de tiempo de la última escritura a categorías o movimientos.
   /// Comparada contra [settingLastBackup] dice si hay cambios sin
@@ -84,13 +85,15 @@ class DBHelper {
 
     await _createIndexes(db);
     await _createSettingsTable(db);
+    await _createDebts(db);
     await _seedDefaultCategories(db);
   }
 
   /// Migra instalaciones existentes sin perder categorías ni movimientos:
   /// v1→v2 pasó de emoji a `icon_key`, v2→v3 eliminó las columnas viejas
   /// que habían quedado NOT NULL, v3→v4 agrega los índices y re-sincroniza
-  /// los datos denormalizados, v4→v5 agrega la tabla `settings`.
+  /// los datos denormalizados, v4→v5 agrega la tabla `settings`, v5→v6
+  /// agrega las deudas en cuotas.
   Future<void> onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
       await _migrateEmojiToIconKey(db);
@@ -104,6 +107,31 @@ class DBHelper {
     }
     if (oldVersion < 5) {
       await _createSettingsTable(db);
+    }
+    if (oldVersion < 6) {
+      await _createDebts(db);
+    }
+  }
+
+  /// Tabla `debts` y columna `transactions.debt_id`, que ata cada cuota a
+  /// su deuda. La columna admite null y no reescribe ninguna fila: los
+  /// movimientos que ya existen quedan tal cual, como movimientos sueltos.
+  ///
+  /// Es idempotente porque SQLite no tiene `ADD COLUMN IF NOT EXISTS`: el
+  /// paso puede volver a correr si se reinstala una versión vieja encima.
+  Future<void> _createDebts(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS debts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        total_amount REAL NOT NULL,
+        installments INTEGER NOT NULL,
+        first_date TEXT NOT NULL
+      )
+    ''');
+    final columns = await db.rawQuery('PRAGMA table_info(transactions)');
+    if (!columns.any((c) => c['name'] == 'debt_id')) {
+      await db.execute('ALTER TABLE transactions ADD COLUMN debt_id INTEGER');
     }
   }
 
@@ -372,6 +400,56 @@ class DBHelper {
     return id;
   }
 
+  // ---------- Deudas en cuotas ----------
+
+  Future<List<DebtModel>> getDebts() async {
+    final db = await database;
+    final rows = await db.query('debts', orderBy: 'first_date ASC, id ASC');
+    return rows.map(DebtModel.fromMap).toList();
+  }
+
+  /// Crea la deuda y registra todas sus cuotas como gastos con fecha
+  /// futura, en una sola transacción: nunca queda una deuda a medias.
+  Future<int> insertDebt(DebtModel debt, CategoryModel category) async {
+    final db = await database;
+    return db.transaction((txn) => insertDebtWith(txn, debt, category));
+  }
+
+  /// Cuerpo de [insertDebt], expuesto para que los tests lo corran sobre
+  /// una base en memoria (DBHelper resuelve su propia ruta de base).
+  Future<int> insertDebtWith(
+      DatabaseExecutor txn, DebtModel debt, CategoryModel category) async {
+    final debtId = await txn.insert('debts', debt.toMap()..remove('id'));
+    for (final tx in debt.buildInstallments(debtId: debtId, category: category)) {
+      await txn.insert('transactions', tx.toMap()..remove('id'));
+    }
+    await _touch(txn);
+    return debtId;
+  }
+
+  /// Elimina la deuda y sus cuotas **futuras**. Las que ya pasaron se
+  /// quedan en el Historial como gastos sueltos: esa plata ya se gastó, y
+  /// borrarlas cambiaría los saldos de meses cerrados.
+  Future<void> deleteDebt(int id, {required DateTime now}) async {
+    final db = await database;
+    await db.transaction((txn) => deleteDebtWith(txn, id, now: now));
+  }
+
+  /// Cuerpo de [deleteDebt], expuesto para los tests.
+  Future<void> deleteDebtWith(DatabaseExecutor txn, int id,
+      {required DateTime now}) async {
+    final endOfToday = DateTime(now.year, now.month, now.day, 23, 59, 59, 999);
+    // Las fechas son ISO 8601 locales, así que comparar texto es
+    // comparar fechas.
+    await txn.delete('transactions',
+        where: 'debt_id = ? AND date > ?',
+        whereArgs: [id, endOfToday.toIso8601String()]);
+    await txn.update('transactions', {'debt_id': null},
+        where: 'debt_id = ?', whereArgs: [id]);
+    await txn.delete('debts', where: 'id = ?', whereArgs: [id]);
+    await _touch(txn);
+  }
+
   // ---------- Restauración desde un respaldo ----------
 
   /// Reemplaza **todas** las categorías y movimientos por los del
@@ -382,20 +460,33 @@ class DBHelper {
   /// `transactions.category_id` apunta a ellas, y dejar que SQLite
   /// reasigne los ids haría que los movimientos restaurados terminen
   /// colgados de la categoría equivocada.
+  ///
+  /// Lo mismo vale para las deudas. Un respaldo anterior al formato 3 no
+  /// trae deudas, y una cuota que apunte a una deuda que no vino se
+  /// restaura como gasto suelto en vez de quedar colgando de un id que no
+  /// existe.
   Future<void> replaceAllData({
     required List<CategoryModel> categories,
     required List<TransactionModel> transactions,
+    List<DebtModel> debts = const [],
   }) async {
     final db = await database;
     await db.transaction((txn) async {
       await txn.delete('transactions');
       await txn.delete('categories');
+      await txn.delete('debts');
 
       for (final category in categories) {
         await txn.insert('categories', category.toMap());
       }
+      for (final debt in debts) {
+        await txn.insert('debts', debt.toMap());
+      }
+      final debtIds = debts.map((d) => d.id).toSet();
       for (final tx in transactions) {
-        await txn.insert('transactions', tx.toMap());
+        final map = tx.toMap();
+        if (!debtIds.contains(tx.debtId)) map['debt_id'] = null;
+        await txn.insert('transactions', map);
       }
 
       await _touch(txn);

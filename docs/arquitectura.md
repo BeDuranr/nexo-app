@@ -15,10 +15,10 @@ Sin backend propio y sin PIN. SQLite en el dispositivo sigue siendo la **única 
 
 - `main.dart` — entry point.
 - `db/db_helper.dart` — todo el acceso a SQLite (CRUD de categorías y transacciones, migraciones de schema, tabla `settings`).
-- `models/` — `category_model.dart`, `transaction_model.dart`.
-- `providers/` — `category_provider.dart`, `transaction_provider.dart`, `backup_provider.dart` (`ChangeNotifier`, consumidos vía `provider`).
+- `models/` — `category_model.dart`, `transaction_model.dart`, `debt_model.dart` (deuda en cuotas: fechas, montos y avance).
+- `providers/` — `category_provider.dart`, `transaction_provider.dart`, `debt_provider.dart`, `backup_provider.dart` (`ChangeNotifier`, consumidos vía `provider`).
 - `services/` — `google_auth_service.dart` y `sheets_backup_service.dart`: lo único del proyecto que habla con la red. `background_task.dart` le pide a iOS tiempo extra en segundo plano para el respaldo automático (la otra mitad está en `ios/Runner/AppDelegate.swift`).
-- `screens/` — `home_screen.dart` (contenedor de tabs), `quick_entry_screen.dart`, `history_screen.dart`, `edit_transaction_screen.dart`, `metrics_screen.dart`, `settings_screen.dart`.
+- `screens/` — `home_screen.dart` (contenedor de tabs), `quick_entry_screen.dart`, `history_screen.dart`, `edit_transaction_screen.dart`, `metrics_screen.dart`, `debts_screen.dart` + `new_debt_screen.dart`, `settings_screen.dart`.
 - `widgets/movement_form.dart` — **formulario de movimiento compartido** por registro y edición (monto, toggle gasto/ingreso, categorías, nota, fecha, barra "Listo"). Antes esas ~250 líneas estaban duplicadas en las dos pantallas. Guarda la categoría como **id** y la resuelve contra `CategoryProvider` en cada build: por eso nunca se guarda un nombre desactualizado, y si la categoría fue eliminada obliga a elegir una en vez de reasignar en silencio.
 - `theme/app_theme.dart` — todo el sistema de diseño (ver `docs/diseno-ux.md`).
 - `widgets/`, `utils/` — componentes compartidos y helpers.
@@ -29,9 +29,11 @@ Sin backend propio y sin PIN. SQLite en el dispositivo sigue siendo la **única 
 
 **`transactions`**: `id`, `amount`, `type` (`income`/`expense`), `category_id` + `category_name`/`category_icon_key` denormalizados (se conservan aunque la categoría se edite o elimine después), `note`, `date` (editable — no forzada a "hoy", y la fecha seleccionada persiste entre registros consecutivos para poder cargar varios movimientos con la misma fecha seguidos).
 
+**`debts`**: `id`, `name`, `total_amount`, `installments`, `first_date`. Una deuda en cuotas (ej. "Crédito auto", 12 cuotas desde el 30 de noviembre). **Las cuotas no viven en esta tabla**: al crearla se insertan de una vez como gastos comunes en `transactions`, con fecha futura y `debt_id` apuntando a la deuda. Así cada cuota aparece sola en su mes del Historial y entra al saldo cuando llega su día, sin depender de que la app esté abierta ese día. El avance (`DebtStatus` en `models/debt_model.dart`) se calcula desde esos movimientos, porque una cuota se puede editar o borrar en el Historial. Un día que no existe en el mes (el 30 en febrero) cae en el último día de ese mes. Eliminar una deuda borra sus cuotas futuras y deja las pasadas como gastos sueltos.
+
 **`settings`**: `key`, `value`. Clave/valor para lo que no son datos del usuario — la cuenta de Google conectada, el id de la planilla de respaldo, la marca de la última escritura y la del último respaldo. Vive en SQLite y no en `shared_preferences` para no sumar una dependencia ni un segundo lugar donde buscar el estado de la app.
 
-Schema versionado (actualmente **v5**) con migraciones `onUpgrade` en `db_helper.dart`:
+Schema versionado (actualmente **v6**) con migraciones `onUpgrade` en `db_helper.dart`:
 
 | Paso | Qué hizo |
 |---|---|
@@ -39,6 +41,7 @@ Schema versionado (actualmente **v5**) con migraciones `onUpgrade` en `db_helper
 | v2→v3 | Reconstruyó ambas tablas para eliminar las columnas `emoji`/`category_emoji`, que habían quedado NOT NULL y hacían fallar todo INSERT nuevo. |
 | v3→v4 | Índices sobre `transactions(date)` y `transactions(category_id)`, y re-sincronización de los nombres/íconos denormalizados que quedaron viejos. |
 | v4→v5 | Tabla `settings` para la cuenta de Google y el estado del respaldo. |
+| v5→v6 | Tabla `debts` y columna `transactions.debt_id` (null en todo lo que ya existía) para las deudas en cuotas. |
 
 **Todo cambio de schema va por un nuevo paso `onUpgrade`, nunca modificando `_onCreate` directamente** — ya existen datos reales (los del padre del usuario) en producción, esto no es un ambiente de pruebas. `test/db_migration_test.dart` corre las migraciones sobre una base v1 sintética con `sqflite_common_ffi`; conviene extenderlo con cada paso nuevo.
 

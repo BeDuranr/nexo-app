@@ -34,7 +34,7 @@ flutter build apk --release --split-per-abi      # APK en build/app/outputs/flut
 ## Reglas que no se rompen
 
 - **Sin backend propio.** La única red es Google Sheets/Drive para el respaldo, y **es opcional**: nada de la app puede quedar esperando una cuenta, un token o una respuesta de Google.
-- **Cambios de schema SQLite solo con un paso nuevo de `onUpgrade`**, nunca tocando `_onCreate`. El schema va por v5. Cada paso nuevo se prueba en `test/db_migration_test.dart`. Hay datos reales sin respaldo: una migración mala no tiene vuelta atrás.
+- **Cambios de schema SQLite solo con un paso nuevo de `onUpgrade`**, nunca tocando `_onCreate`. El schema va por v6. Cada paso nuevo se prueba en `test/db_migration_test.dart`. Hay datos reales sin respaldo: una migración mala no tiene vuelta atrás.
 - **Categorías sin campo de tipo**: una misma categoría sirve para ingreso y gasto, y el tipo se elige aparte.
 - **Solo la paleta oscura "urban"**: no proponer temas claros sin que el usuario lo pida (ya se descartó un rediseño Material 3 claro).
 - **Primero que se sienta pulida**: fluidez y UX antes que features nuevas por iniciativa propia.
@@ -51,8 +51,8 @@ flutter build apk --release --split-per-abi      # APK en build/app/outputs/flut
 Detalle completo en `docs/respaldo-google.md`.
 
 - **La etiqueta de Drive `nexoRespaldo=v1` no cambia nunca.** Con ella la app reencuentra la planilla después de reinstalarse. La versión del formato es otra cosa y se anota en la hoja `info`.
-- **Restaurar tiene que seguir leyendo todos los formatos anteriores** (hoy el 1 y el 2). Un cambio de formato sin compatibilidad deja respaldos sin poder restaurarse.
-- **La subida reemplaza las tres hojas en un solo `batchUpdate`.** No volver a borrar y reescribir hoja por hoja: si iOS suspende la app entre medio, la hoja de movimientos queda vacía.
+- **Restaurar tiene que seguir leyendo todos los formatos anteriores** (hoy el 1, el 2 y el 3). Un cambio de formato sin compatibilidad deja respaldos sin poder restaurarse.
+- **La subida reemplaza todas las hojas en un solo `batchUpdate`.** No volver a borrar y reescribir hoja por hoja: si iOS suspende la app entre medio, la hoja de movimientos queda vacía.
 - **Restaurar es la única operación destructiva** y no se dispara nunca sola.
 - **Scopes:** solo `openid`, `email` y `drive.file`. Sumar uno sensible obliga a una verificación manual de Google.
 
@@ -86,7 +86,8 @@ Proyecto de Google Cloud: `nexo-512100`, con clientes OAuth iOS, Android y Web. 
 Esta sección envejece: verificar contra `git log` antes de confiar en ella.
 
 - **Hecho:**
-  - Respaldo en Sheets en formato 2: en español, con fechas reales y la subida en una sola operación.
+  - Respaldo en Sheets en formato 3: en español, con fechas reales, la subida en una sola operación y las deudas en cuotas.
+  - Deudas en cuotas (pestaña Deudas): las cuotas se registran de una vez como gastos con fecha futura.
   - Login probado en iPhone.
   - Keystore de release y login de Android implementados.
   - APK del cuñado compilado.
